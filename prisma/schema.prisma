@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  OWNER
+  MECHANIC
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  EN_ROUTE
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BETTER AUTH MODELS (unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Account {
+  id                    String    @id @default(cuid())
+  userId                String
+  providerId            String
+  accountId             String
+  password              String?
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TwoFactor {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  secret      String
+  backupCodes String?
+  enabled     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APP MODELS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id               String            @id @default(cuid())
+  name             String?
+  email            String            @unique
+  phone            String?           @unique
+  image            String?
+  role             Role              @default(OWNER)
+  emailVerified    Boolean           @default(false)
+  twoFactorEnabled Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Relations
+  accounts           Account[]
+  sessions           Session[]
+  twoFactor          TwoFactor?
+  mechanicProfile    MechanicProfile?
+  vehicles           Vehicle[]         @relation("UserVehicles")
+  bookingsAsOwner    Booking[]         @relation("OwnerBookings")
+  bookingsAsMechanic Booking[]         @relation("MechanicBookings")
+  ratingsGiven       MechanicRating[]  @relation("GivenRatings")    // NEW
+  ratingsReceived    MechanicRating[]  @relation("ReceivedRatings")  // NEW
+}
+
+model MechanicProfile {
+  id                 String                   @id @default(cuid())
+  userId             String                   @unique
+  shopName           String?
+  bio                String?
+  specialization     String
+  isAvailable        Boolean                  @default(true)
+  certificationFile  String?
+  yearsExperience    Int?
+  verificationStatus VerificationStatus       @default(PENDING)
+  isVerified         Boolean                  @default(false)
+  latitude           Float?
+  longitude          Float?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specializations    MechanicSpecialization[]
+}
+
+model Vehicle {
+  id           String    @id @default(cuid())
+  ownerId      String
+  brand        String
+  model        String
+  yearModel    Int?
+  plateNumber  String?
+
+  // NEW fields ↓
+  color        String?                          // e.g. "Silver", "Black"
+  mileage      Int?                             // in kilometres
+  fuelType     String?                          // Petrol | Diesel | Electric | Hybrid
+  transmission String?                          // Manual | Automatic
+  healthStatus String?   @default("GOOD")       // GOOD | FAIR | NEEDS_ATTENTION
+  lastServiceAt DateTime?                       // date of last service
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  bookings     Booking[]
+  owner        User      @relation("UserVehicles", fields: [ownerId], references: [id])
+}
+
+model Booking {
+  id                 String        @id @default(cuid())
+  ownerId            String
+  mechanicId         String
+  vehicleId          String
+  problemDescription String
+  isEmergency  Boolean @default(false)
+  address      String?
+  latitude     Float?
+  longitude    Float?
+
+  // CHANGED: String → BookingStatus enum
+  status             BookingStatus @default(PENDING)
+
+  // NEW fields ↓
+  scheduledAt  DateTime?                        // when the job is scheduled
+  price        Decimal?  @db.Decimal(10, 2)    // agreed/estimated price in ₱
+  notes        String?                          // extra notes from owner/mechanic
+  completedAt  DateTime?                        // set when status → DONE
+  updatedAt    DateTime  @updatedAt
+
+  createdAt    DateTime  @default(now())
+
+  // Relations
+  mechanic     User           @relation("MechanicBookings", fields: [mechanicId], references: [id])
+  owner        User           @relation("OwnerBookings",    fields: [ownerId],    references: [id])
+  vehicle      Vehicle        @relation(fields: [vehicleId], references: [id])
+  rating       MechanicRating?                  // NEW — one rating per booking
+}
+
+// NEW — owner rates a mechanic after a booking is completed
+model MechanicRating {
+  id         String   @id @default(cuid())
+  mechanicId String
+  ownerId    String
+  bookingId  String   @unique                  // one rating per booking
+  rating     Int                               // 1–5 stars
+  comment    String?
+  sentiment  String?  @default("NEUTRAL")      // POSITIVE | NEUTRAL | NEGATIVE (AI-analyzed)
+  createdAt  DateTime @default(now())
+
+  mechanic   User     @relation("ReceivedRatings", fields: [mechanicId], references: [id])
+  owner      User     @relation("GivenRatings",    fields: [ownerId],    references: [id])
+  booking    Booking  @relation(fields: [bookingId], references: [id])
+}
+
+model Specialization {
+  id        String                   @id @default(cuid())
+  name      String                   @unique
+  mechanics MechanicSpecialization[]
+}
+
+model MechanicSpecialization {
+  mechanicId       String
+  specializationId String
+  mechanic         MechanicProfile @relation(fields: [mechanicId], references: [id])
+  specialization   Specialization  @relation(fields: [specializationId], references: [id])
+
+  @@id([mechanicId, specializationId])
+}
