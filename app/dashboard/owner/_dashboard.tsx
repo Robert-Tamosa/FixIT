@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -587,33 +588,68 @@ function BottomNav() {
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-50
-      bg-[#080909]/95 backdrop-blur-xl border-t border-white/[0.06]">
+      bg-[#080909]/95 backdrop-blur-xl border-t border-white/[0.06]"
+    >
       <div className="max-w-2xl mx-auto flex items-center justify-around px-2 py-3 pb-5">
-        {NAV_ITEMS.map(({ label, href, active, icon }) => (
-          <button
-            key={label}
-            aria-label={label}
-            aria-current={active ? "page" : undefined}
-            onClick={() => handleNav(label, href)}
-            className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke={active ? "#F59E0B" : "#52525B"}
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true">
-              <path d={icon} />
-            </svg>
-            <span
-              className={`text-[10px] font-medium leading-none ${active ? "text-amber-400" : "text-zinc-600"}`}>
-              {label}
-            </span>
-          </button>
-        ))}
+        {NAV_ITEMS.map(({ label, href, icon }) =>
+          label === "Messages" ? (
+            <Link
+              key={label}
+              href="/dashboard/owner/chats"
+              className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke={active === label ? "#F59E0B" : "#52525B"}
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d={icon} />
+              </svg>
+              <span
+                className={`text-[10px] font-medium leading-none ${
+                  active === label ? "text-amber-400" : "text-zinc-600"
+                }`}
+              >
+                {label}
+              </span>
+            </Link>
+          ) : (
+            <button
+              key={label}
+              aria-label={label}
+              aria-current={active === label ? "page" : undefined}
+              onClick={() => handleNav(label, href)}
+              className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95"
+            >
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke={active === label ? "#F59E0B" : "#52525B"}
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d={icon} />
+              </svg>
+              <span
+                className={`text-[10px] font-medium leading-none ${
+                  active === label ? "text-amber-400" : "text-zinc-600"
+                }`}
+              >
+                {label}
+              </span>
+            </button>
+          )
+        )}
       </div>
     </nav>
   );
@@ -621,7 +657,7 @@ function BottomNav() {
 
 // ── AI Diagnostic Chathead ────────────────────────────────────────────────────
 
-function AIDiagnosticChathead() {
+export function AIDiagnosticChathead() {
   const router = useRouter();
   const [pulse, setPulse] = useState(true);
 
@@ -649,7 +685,7 @@ function AIDiagnosticChathead() {
 
       {/* Chathead button */}
       <button
-        onClick={() => router.push("/dashboard/owner/chats")}
+        onClick={() => router.push("/dashboard/owner/chats/ai")}
         aria-label="Open AI Diagnostics"
         className="relative w-14 h-14 rounded-full
           bg-gradient-to-br from-amber-400 to-yellow-500

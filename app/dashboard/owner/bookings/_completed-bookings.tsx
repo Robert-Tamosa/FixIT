@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { RatingModal } from "./RatingModal";
 import { BottomNav } from "@/components/BottomNav";
+import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,62 @@ export default function CompletedBookingsView({
     setSelected(null);
   }
 
+  function AIDiagnosticChathead() {
+    const router = useRouter();
+    const [pulse, setPulse] = useState(true);
+  
+    return (
+      <div className="fixed bottom-24 right-4 z-50 flex flex-col items-end gap-2">
+        {/* Tooltip label */}
+        {pulse && (
+          <div className="flex items-center gap-2 bg-[#111112] border border-white/[0.09]
+            rounded-2xl px-3 py-2 shadow-xl animate-in fade-in slide-in-from-right-2 duration-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+            <p className="text-xs font-medium text-zinc-300 whitespace-nowrap">
+              AI Diagnosis — Ask me anything
+            </p>
+            <button
+              onClick={() => setPulse(false)}
+              className="ml-1 text-zinc-600 hover:text-zinc-400 transition-colors"
+              aria-label="Dismiss">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.4"
+                  strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        )}
+  
+        {/* Chathead button */}
+        <button
+          onClick={() => router.push("/dashboard/owner/chats/ai")}
+          aria-label="Open AI Diagnostics"
+          className="relative w-14 h-14 rounded-full
+            bg-gradient-to-br from-amber-400 to-yellow-500
+            shadow-[0_8px_32px_rgba(245,158,11,0.4)]
+            flex items-center justify-center
+            active:scale-95 transition-transform duration-150
+            hover:shadow-[0_8px_40px_rgba(245,158,11,0.55)]">
+          {/* Outer ring pulse */}
+          <span className="absolute inset-0 rounded-full bg-amber-400/30 animate-ping"
+            style={{ animationDuration: "2s" }} />
+          {/* Brain / AI icon */}
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.66z"
+              stroke="#080909" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.66z"
+              stroke="#080909" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {/* Online dot */}
+          <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full
+            bg-emerald-400 border-2 border-[#080909]" />
+        </button>
+      </div>
+    );
+  }
+
   function handleRateSuccess(bookingId: string, rating: number, comment: string | null) {
     setBookings((prev) =>
       prev.map((b) =>
@@ -257,6 +314,9 @@ export default function CompletedBookingsView({
           onSuccess={handleSuccess}
         />
       )}
+
+      <AIDiagnosticChathead />
+
       <BottomNav/>  
     </div>
   );

@@ -6,7 +6,7 @@ import VehicleSummaryCard from "@/components/profile/vehicle-summary-card";
 import ContactInfoCard from "@/components/profile/contact-info-card";
 import AccountStatusCard from "@/components/profile/account-status-card";
 import SignOutButton from "@/components/SignOutButton";
-
+import { AIDiagnosticChathead } from "../_dashboard"
 
 export default async function OwnerProfilePage() {
   const session = await requireOwner();
@@ -36,6 +36,8 @@ export default async function OwnerProfilePage() {
       />
 
       <SignOutButton/>
+
+      <AIDiagnosticChathead/>
 
       <BottomNav/>
     </div>
