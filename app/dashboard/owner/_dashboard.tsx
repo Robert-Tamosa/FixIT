@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 const BookingModalLazy = dynamic(
   () => import("./bookingModal").then((m) => m.BookingModal),
@@ -40,6 +40,21 @@ export interface DisplayMechanic {
   rating: number;
   reviews: number;
   available: boolean;
+}
+
+export interface DisplayVehicle {
+  id:    string;
+  label: string;
+}
+
+interface SearchResult {
+  id:             string;
+  name:           string;
+  initials:       string;
+  specialization: string;
+  rating:         number;
+  reviews:        number;
+  available:      boolean;
 }
 
 // ── Step config (uppercase matches BookingStatus enum in schema) ───────────────
@@ -92,13 +107,52 @@ function StarRating({ value }: { value: number }) {
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ user }: { user: SessionUser }) {
-  const h = new Date().getHours();
-  const greeting =
-    h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+function Header({
+  user,
+  onBookMechanic,
+}: {
+  user:           SessionUser;
+  onBookMechanic: (mechanicId: string, mechanicName: string) => void;
+}) {
+  const h         = new Date().getHours();
+  const greeting  = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const firstName = user.name.split(" ")[0];
-  const initials = getInitials(user.name);
-  const [query, setQuery] = useState("");
+  const initials  = getInitials(user.name);
+
+  const [query,   setQuery]   = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [isOpen,  setIsOpen]  = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchResults = useCallback(async (q: string) => {
+    setLoading(true);
+    try {
+      const res  = await fetch(`/api/mechanic/search?q=${encodeURIComponent(q)}&available=false`);
+      const data = (await res.json()) as { results?: SearchResult[] };
+      setResults(data.results ?? []);
+      setIsOpen(true);
+    } catch { setResults([]); }
+    finally  { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (!query.trim()) { setResults([]); setIsOpen(false); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { void fetchResults(query); }, 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, fetchResults]);
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, []);
 
   return (
     <div className="mb-6">
@@ -139,16 +193,18 @@ function Header({ user }: { user: SessionUser }) {
           </div>
         </div>
       </div>
-      {/* Search bar */}
-      <div className="relative w-full">
-        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+      {/* Search bar + dropdown */}
+      <div className="relative w-full" ref={containerRef}>
+        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"
           width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="11" cy="11" r="8" stroke="#52525B" strokeWidth="1.8" />
           <path d="M21 21l-4.35-4.35" stroke="#52525B" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
         <input
-          type="search" value={query}
+          type="search"
+          value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => { if (results.length > 0) setIsOpen(true); }}
           placeholder="Search mechanics, services…"
           className="w-full pl-10 pr-4 py-2.5 rounded-xl
             bg-white/[0.04] border border-white/[0.08]
@@ -156,6 +212,97 @@ function Header({ user }: { user: SessionUser }) {
             focus:outline-none focus:border-amber-400/40 focus:bg-white/[0.06]
             transition-colors"
         />
+
+        {/* ── Dropdown ── */}
+        {isOpen && (
+          <div className="absolute top-full left-0 right-0 mt-2 z-50
+            bg-[#12141A] border border-white/[0.09] rounded-2xl
+            shadow-[0_8px_40px_rgba(0,0,0,0.6)] overflow-hidden">
+            {loading ? (
+              <div className="divide-y divide-white/[0.05]">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-3.5 animate-pulse">
+                    <div className="w-9 h-9 rounded-xl bg-white/[0.06] shrink-0" />
+                    <div className="flex-1 space-y-1.5">
+                      <div className="h-3 w-28 bg-white/[0.06] rounded" />
+                      <div className="h-2.5 w-20 bg-white/[0.04] rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : results.length === 0 ? (
+              <p className="px-4 py-5 text-sm text-zinc-500 text-center">
+                No mechanics found for &quot;{query}&quot;
+              </p>
+            ) : (
+              <div>
+                <div className="divide-y divide-white/[0.05]">
+                  {results.slice(0, 5).map((m) => (
+                    <div key={m.id}
+                      className="flex items-center gap-3 px-4 py-3
+                        hover:bg-white/[0.04] transition-colors">
+                      {/* Avatar */}
+                      <div className={[
+                        "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold",
+                        m.available
+                          ? "bg-amber-400/10 border border-amber-400/20 text-amber-400"
+                          : "bg-white/[0.05] border border-white/[0.08] text-zinc-500",
+                      ].join(" ")}>
+                        {m.initials}
+                      </div>
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <p className="text-sm font-semibold text-zinc-100 truncate">{m.name}</p>
+                          <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${
+                            m.available ? "bg-emerald-400" : "bg-zinc-600"
+                          }`} />
+                        </div>
+                        <p className="text-xs text-zinc-500 truncate">{m.specialization}</p>
+                      </div>
+                      {/* Rating + Book */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {m.rating > 0 && (
+                          <span className="text-[11px] text-zinc-400 flex items-center gap-0.5">
+                            <svg width="10" height="10" viewBox="0 0 24 24"
+                              fill="#F59E0B" aria-hidden="true">
+                              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                            </svg>
+                            {m.rating}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => {
+                            setIsOpen(false);
+                            setQuery("");
+                            onBookMechanic(m.id, m.name);
+                          }}
+                          className="text-[11px] font-bold text-[#080909]
+                            bg-amber-400 hover:bg-amber-300
+                            px-2.5 py-1 rounded-lg
+                            transition-colors active:scale-95"
+                        >
+                          Book
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {results.length > 5 && (
+                  <div className="border-t border-white/[0.05] px-4 py-3">
+                    <a
+                      href={`/dashboard/owner/search?q=${encodeURIComponent(query)}`}
+                      className="text-xs text-amber-400 hover:text-amber-300 font-semibold"
+                      onClick={() => setIsOpen(false)}
+                    >
+                      View all {results.length} results →
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -246,6 +393,7 @@ function ActionButtonsRow({ onBookService }: { onBookService: () => void }) {
 
 function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
   const stepIndex = STEPS.indexOf(booking.status as (typeof STEPS)[number]);
+  const router = useRouter();
 
   return (
     <div className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl p-5 mb-4">
@@ -393,6 +541,7 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
           </span>
         </div>
         <button
+          onClick={() => router.push(`/dashboard/owner/tracking/${booking.id}`)}
           className="flex-1 py-2.5 px-3 rounded-xl bg-amber-400/10 border border-amber-400/20
           text-amber-400 text-xs font-semibold hover:bg-amber-400/15 transition-colors text-center">
           Track Live
@@ -720,6 +869,7 @@ interface OwnerDashboardProps {
   activeBooking:  DisplayBooking | null;
   pendingBooking: DisplayBooking | null;
   mechanics:      DisplayMechanic[];
+  vehicles?:      DisplayVehicle[];
 }
 
 // ── Pending Booking Card ──────────────────────────────────────────────────────
@@ -764,9 +914,16 @@ export default function OwnerDashboardView({
   user,
   activeBooking,
   pendingBooking,
-  mechanics,
+  mechanics = [],
+  vehicles  = [],
 }: OwnerDashboardProps) {
-  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [bookingModalOpen,    setBookingModalOpen]    = useState(false);
+  const [preSelectedMechanic, setPreSelectedMechanic] = useState<{ id: string; name: string } | null>(null);
+
+  function handleBookMechanic(mechanicId: string, mechanicName: string) {
+    setPreSelectedMechanic({ id: mechanicId, name: mechanicName });
+    setBookingModalOpen(true);
+  }
 
   return (
     <div className="min-h-screen w-screen bg-[#080909] relative">
@@ -781,7 +938,7 @@ export default function OwnerDashboardView({
       </div>
 
       <div className="relative z-10 w-full h-full p-4 pb-28">
-        <Header user={user} />
+        <Header user={user} onBookMechanic={handleBookMechanic} />
         <ActionButtonsRow onBookService={() => setBookingModalOpen(true)} />
         {activeBooking ? (
           <ActiveBookingCard booking={activeBooking} />
@@ -801,8 +958,9 @@ export default function OwnerDashboardView({
       {bookingModalOpen && (
         <BookingModalLazy
           isOpen={bookingModalOpen}
-          onClose={() => setBookingModalOpen(false)}
+          onClose={() => { setBookingModalOpen(false); setPreSelectedMechanic(null); }}
           mechanics={mechanics}
+          preSelectedMechanicId={preSelectedMechanic?.id ?? null}
         />
       )}
     </div>

@@ -72,7 +72,6 @@ export default async function MechanicDashboardPage() {
     phone:       (session.user as { phone?: string | null }).phone,
     specialty:   rawMechanic.mechanicProfile?.specialization  ?? "General Mechanic",
     isVerified:  rawMechanic.mechanicProfile?.isVerified      ?? false,
-    isAvailable: rawMechanic.mechanicProfile?.isAvailable     ?? false,
   };
 
   // ── 2. Incoming requests (PENDING bookings assigned to this mechanic) ──────
@@ -124,7 +123,6 @@ export default async function MechanicDashboardPage() {
         status:        rawActive.status as ActiveJob["status"],
         scheduledAt:   formatDate(rawActive.scheduledAt),
         price:         formatPrice(rawActive.price),
-        address:       rawActive.address      ?? "Address not provided",
       }
     : null;
 

@@ -341,6 +341,7 @@ function ActiveJobCard({
   job:             ActiveJob;
   onAdvanceStatus: (id: string) => void;
 }) {
+  const router    = useRouter();
   const stepIndex = JOB_STEPS.indexOf(job.status as typeof JOB_STEPS[number]);
 
   return (
@@ -443,6 +444,21 @@ function ActiveJobCard({
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.4 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 8.9a16 16 0 0 0 6 6l.95-.96a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
               stroke="#71717A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+
+        {/* Track button */}
+        <button
+          onClick={() => router.push(`/dashboard/mechanic/tracking/${job.id}`)}
+          aria-label="Share location"
+          className="w-11 h-11 rounded-xl bg-emerald-400/10 border border-emerald-400/20
+            flex items-center justify-center hover:bg-emerald-400/15 transition-colors shrink-0"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
+              stroke="#34D399" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="12" cy="10" r="3"
+              stroke="#34D399" strokeWidth="1.6" />
           </svg>
         </button>
 
@@ -663,10 +679,9 @@ const NAV_ITEMS = [
     icon:  "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9l2 2 4-4",
   },
   {
-    label: "Chats",
-  href: "/dashboard/mechanic/chats",
-  active: false,
-  icon: "M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z",
+     label: "Chats",
+     href: "/dashboard/mechanic/chats",
+     icon: "M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z",
   },
   {
     label: "Profile",
@@ -675,7 +690,7 @@ const NAV_ITEMS = [
   },
 ] as const;
 
-function BottomNav() {
+export function BottomNav() {
   const router = useRouter();
   const [active, setActive] = useState<string>("Home");
 

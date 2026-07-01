@@ -126,6 +126,7 @@ model MechanicProfile {
   isVerified         Boolean                  @default(false)
   latitude           Float?
   longitude          Float?
+  locationUpdatedAt  DateTime?                                 // when location was last pushed
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -163,8 +164,8 @@ model Booking {
   problemDescription String
   isEmergency  Boolean @default(false)
   address      String?
-  latitude     Float?
-  longitude    Float?
+  ownerLat     Float?                           // owner's pinned location
+  ownerLng     Float?
 
   // CHANGED: String → BookingStatus enum
   status             BookingStatus @default(PENDING)

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const GEMINI_API_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 const SYSTEM_PROMPT = `You are FixIT's AI Vehicle Diagnostic Assistant. You help vehicle owners in the Philippines identify possible causes of their vehicle problems and recommend next steps.
 
@@ -20,7 +19,7 @@ RESPONSE FORMAT — always respond in this exact JSON structure:
   ],
   "recommendations": ["string"],
   "partsToCheck": ["string"],
-  "estimatedCostRange": "string (e.g. P500-P2,000)",
+  "estimatedCostRange": "string (e.g. ₱500–₱2,000)",
   "mechanicSpecialty": "ENGINE_REPAIR" | "ELECTRICAL" | "BRAKES" | "TIRES" | "AIRCON" | "DIAGNOSTICS",
   "safeToDrive": boolean,
   "summary": "string (1-2 sentence plain summary)"
@@ -39,30 +38,37 @@ export async function POST(req: NextRequest) {
     ? `Vehicle: ${vehicleInfo}\n\nSymptoms: ${symptoms}`
     : `Symptoms: ${symptoms}`;
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ error: "API key not configured." }, { status: 500 });
   }
 
   try {
-    const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+    const res = await fetch(GROQ_API_URL, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: "user", parts: [{ text: userMessage }] }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 800 },
+        model:       "llama-3.3-70b-versatile",
+        temperature: 0.3,
+        max_tokens:  800,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user",   content: userMessage   },
+        ],
       }),
     });
 
     if (!res.ok) {
       const err = await res.text();
-      console.error("[Gemini API error]", err);
-      return NextResponse.json({ error: "Gemini API error." }, { status: 502 });
+      console.error("[Groq API error]", err);
+      return NextResponse.json({ error: "Groq API error." }, { status: 502 });
     }
 
-    const data = await res.json();
-    const raw  = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const data    = await res.json();
+    const raw     = data.choices?.[0]?.message?.content ?? "";
     const cleaned = raw.replace(/```json|```/g, "").trim();
     const parsed  = JSON.parse(cleaned);
 
