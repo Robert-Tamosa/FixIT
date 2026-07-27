@@ -298,7 +298,7 @@ export default function AIDiagnosticsChatPage() {
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <p className="text-[11px] text-zinc-500">Online · Powered by Claude AI</p>
+            <p className="text-[11px] text-zinc-500">Online</p>
           </div>
         </div>
       </div>

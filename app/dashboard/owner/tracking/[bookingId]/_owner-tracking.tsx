@@ -1,16 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { getMechanicLocation, saveOwnerLocation, checkGeofence } from "@/app/actions/tracking-actions";
+import { getMechanicLocation, checkGeofence, type MechanicLocationResult } from "@/app/actions/tracking-actions";
+import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface TrackingData {
-  status:       string;
-  mechanicName: string;
-  mechanic:     { lat: number | null; lng: number | null; updatedAt: Date | null } | null;
-  owner:        { lat: number | null; lng: number | null };
-}
 
 export interface OwnerTrackingProps {
   bookingId:    string;
@@ -45,14 +39,12 @@ function estimateETA(distMeters: number): string {
 function TrackingMap({
   mechanicLat, mechanicLng,
   ownerLat, ownerLng,
-  onOwnerPinSet,
   geofenceRadius,
 }: {
   mechanicLat:    number | null;
   mechanicLng:    number | null;
   ownerLat:       number | null;
   ownerLng:       number | null;
-  onOwnerPinSet:  (lat: number, lng: number) => void;
   geofenceRadius: number;
 }) {
   const mapRef     = useRef<HTMLDivElement>(null);
@@ -91,11 +83,6 @@ function TrackingMap({
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "© OpenStreetMap",
       }).addTo(map);
-
-      // Click to pin owner location
-      map.on("click", (e: any) => {
-        onOwnerPinSet(e.latlng.lat, e.latlng.lng);
-      });
 
       mapInstance.current = map;
     });
@@ -202,12 +189,12 @@ function TrackingMap({
     <div className="relative w-full rounded-2xl overflow-hidden border border-white/[0.08]"
       style={{ height: "340px" }}>
       <div ref={mapRef} className="w-full h-full" />
-      {/* Tap to pin hint */}
+      {/* Waiting-for-pin hint — shown until the owner's saved location arrives from the DB */}
       {!ownerLat && (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[1000]
           bg-[#080909]/90 backdrop-blur-sm border border-white/[0.08]
           px-3 py-2 rounded-xl pointer-events-none">
-          <p className="text-xs text-zinc-400">Tap map to pin your location</p>
+          <p className="text-xs text-zinc-400">Waiting for your saved location…</p>
         </div>
       )}
     </div>
@@ -224,51 +211,48 @@ export default function OwnerTrackingView({
   initialOwnerLat,
   initialOwnerLng,
 }: OwnerTrackingProps) {
-  const [tracking,    setTracking]    = useState<TrackingData | null>(null);
-  const [ownerLat,    setOwnerLat]    = useState<number | null>(initialOwnerLat);
-  const [ownerLng,    setOwnerLng]    = useState<number | null>(initialOwnerLng);
+  const [tracking,    setTracking]    = useState<MechanicLocationResult>(null);
   const [geofence,    setGeofence]    = useState<{ inside: boolean; distanceMeters: number | null } | null>(null);
   const [lastPoll,    setLastPoll]    = useState<Date | null>(null);
-  const [pinSaving,   setPinSaving]   = useState(false);
   const POLL_INTERVAL = 5_000; // 5 seconds
   const GEOFENCE_RADIUS = 200; // metres
 
+  const router = useRouter();
+
   const poll = useCallback(async () => {
-    const data = await getMechanicLocation(bookingId);
-    if (data) {
-      setTracking(data as TrackingData);
-      setLastPoll(new Date());
+    try {
+      const data = await getMechanicLocation(bookingId);
+      if (data) {
+        setTracking(data);
+        setLastPoll(new Date());
+      }
+    } catch (err) {
+      console.error("Tracking poll failed:", err);
     }
   }, [bookingId]);
 
   // Initial poll + interval
   useEffect(() => {
     poll();
-    const id = setInterval(poll, POLL_INTERVAL);
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") poll();
+    }, POLL_INTERVAL);
     return () => clearInterval(id);
   }, [poll]);
+
+  // Owner pin is intentionally read-only: it comes only from the DB, via the
+  // poll response's `owner.lat/lng` (populated wherever the booking's ownerLat/
+  // ownerLng got saved originally). It falls back to the initial page-load
+  // props only until the first poll resolves. There is no click-to-set-pin
+  // path anymore — the map cannot write this value, only display it.
+  const ownerLat = tracking?.owner.lat ?? initialOwnerLat;
+  const ownerLng = tracking?.owner.lng ?? initialOwnerLng;
 
   // Geofence check when both locations available
   useEffect(() => {
     if (!tracking?.mechanic?.lat || !ownerLat) return;
     checkGeofence(bookingId, GEOFENCE_RADIUS).then(setGeofence);
   }, [tracking, ownerLat, bookingId]);
-
-  async function handleOwnerPin(lat: number, lng: number) {
-    setOwnerLat(lat);
-    setOwnerLng(lng);
-    setPinSaving(true);
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`
-      );
-      const geo     = await res.json();
-      const address = geo.display_name ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-      await saveOwnerLocation(bookingId, lat, lng, address);
-    } finally {
-      setPinSaving(false);
-    }
-  }
 
   // Derive current status — prefer live polled data over the stale prop
   const currentStatus = tracking?.status ?? initialStatus;
@@ -291,6 +275,16 @@ export default function OwnerTrackingView({
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
+          <button
+            onClick={() => router.back()}
+            aria-label="Go back"
+            className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.08]
+              flex items-center justify-center hover:bg-white/[0.07] transition-colors shrink-0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M19 12H5M12 5l-7 7 7 7" stroke="#71717A" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
           <div className="w-9 h-9 rounded-xl bg-amber-400/10 border border-amber-400/20
             flex items-center justify-center shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -372,17 +366,8 @@ export default function OwnerTrackingView({
               mechanicLng={mechLng}
               ownerLat={ownerLat}
               ownerLng={ownerLng}
-              onOwnerPinSet={handleOwnerPin}
               geofenceRadius={GEOFENCE_RADIUS}
             />
-            {pinSaving && (
-              <p className="text-xs text-zinc-500 text-center mt-2">Saving your location…</p>
-            )}
-            {ownerLat && !pinSaving && (
-              <p className="text-xs text-zinc-600 text-center mt-2">
-                📍 Your pin is set · Tap map to move it
-              </p>
-            )}
           </>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 gap-3

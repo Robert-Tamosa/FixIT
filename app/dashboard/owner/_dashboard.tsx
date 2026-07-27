@@ -3,10 +3,16 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useTransition } from "react";
+import { usePolling } from "@/app/hooks/usePolling";
 
 const BookingModalLazy = dynamic(
   () => import("./bookingModal").then((m) => m.BookingModal),
+  { ssr: false }
+);
+
+const EmergencyModalLazy = dynamic(
+  () => import("./emergencyModal").then((m) => m.EmergencyModal),
   { ssr: false }
 );
 
@@ -23,13 +29,25 @@ export interface SessionUser {
 export interface DisplayBooking {
   id: string;
   mechanicName: string;
-  mechanicInitials: string;
+  mechanicInitials: string | null;
   mechanicRating: number;
   service: string; // problemDescription from DB
-  status: "PENDING" | "CONFIRMED" | "EN_ROUTE" | "IN_PROGRESS" | "DONE";
+  status: "PENDING" | "CONFIRMED" | "ESTIMATE_ACCEPTED" | "EN_ROUTE" | "IN_PROGRESS" | "DONE";
   scheduledAt: string | null; // pre-formatted string from page.tsx
   price: string; // e.g. "₱850" or "TBD"
   vehicleLabel: string; // e.g. "Toyota Vios"
+}
+
+export interface DisplayEstimateReview {
+  id: string;
+  mechanicName: string;
+  mechanicInitials: string | null;
+  vehicleLabel: string;
+  service: string;
+  laborCost: number;
+  partsCost: number;
+  totalCost: number;
+  notes: string | null;
 }
 
 export interface DisplayMechanic {
@@ -57,18 +75,18 @@ interface SearchResult {
   available:      boolean;
 }
 
-// ── Step config (uppercase matches BookingStatus enum in schema) ───────────────
+// ── Step config (drives ActiveBookingCard's progress bar only — PENDING and
+//    CONFIRMED never reach this component, they render as PendingBookingCard
+//    instead, so they don't belong in this progression) ─────────────────────
 
 const STEPS = [
-  "PENDING",
-  "CONFIRMED",
+  "ESTIMATE_ACCEPTED",
   "EN_ROUTE",
   "IN_PROGRESS",
   "DONE",
 ] as const;
 const LABELS: Record<string, string> = {
-  PENDING: "Pending",
-  CONFIRMED: "Confirmed",
+  ESTIMATE_ACCEPTED: "Confirmed",
   EN_ROUTE: "En Route",
   IN_PROGRESS: "Active",
   DONE: "Done",
@@ -310,9 +328,23 @@ function Header({
 
 // ── Action Buttons Row ────────────────────────────────────────────────────────
 
-function ActionButtonsRow({ onBookService }: { onBookService: () => void }) {
-  const [dispatched, setDispatched] = useState(false);
+interface DispatchedInfo {
+  mechanicName: string;
+  etaMinutes: number;
+  bookingId: string;
+}
 
+function ActionButtonsRow({
+  onEmergency,
+  onBookService,
+  dispatched,
+  onDismissDispatched,
+}: {
+  onEmergency: () => void;
+  onBookService: () => void;
+  dispatched: DispatchedInfo | null;
+  onDismissDispatched: () => void;
+}) {
   if (dispatched) {
     return (
       <div className="mb-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 px-5 py-4
@@ -325,11 +357,13 @@ function ActionButtonsRow({ onBookService }: { onBookService: () => void }) {
         </div>
         <div>
           <p className="text-sm font-semibold text-emerald-400">Help is on the way</p>
-          <p className="text-xs text-zinc-500">Nearest mechanic dispatched · Est. 8 mins</p>
+          <p className="text-xs text-zinc-500">
+            {dispatched.mechanicName} dispatched · Est. {dispatched.etaMinutes} mins
+          </p>
         </div>
-        <button onClick={() => setDispatched(false)}
+        <button onClick={onDismissDispatched}
           className="ml-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-          Cancel
+          Dismiss
         </button>
       </div>
     );
@@ -344,7 +378,7 @@ function ActionButtonsRow({ onBookService }: { onBookService: () => void }) {
 
       {/* Emergency */}
       <button
-        onClick={() => setDispatched(true)}
+        onClick={onEmergency}
         className="relative flex-1 py-[18px] rounded-2xl
           bg-gradient-to-r from-red-600 to-rose-500 border border-red-500/30
           flex items-center justify-center gap-2.5
@@ -868,6 +902,7 @@ interface OwnerDashboardProps {
   user:           SessionUser;
   activeBooking:  DisplayBooking | null;
   pendingBooking: DisplayBooking | null;
+  estimateReview: DisplayEstimateReview | null;
   mechanics:      DisplayMechanic[];
   vehicles?:      DisplayVehicle[];
 }
@@ -875,12 +910,14 @@ interface OwnerDashboardProps {
 // ── Pending Booking Card ──────────────────────────────────────────────────────
 
 function PendingBookingCard({ booking }: { booking: DisplayBooking }) {
+  const isAwaitingEstimate = booking.status === "CONFIRMED";
+
   return (
     <div className="mb-5 rounded-2xl border border-amber-400/20 bg-amber-400/[0.04] p-5">
       <div className="flex items-center gap-2 mb-4">
         <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
         <span className="text-sm font-semibold text-zinc-100">
-          Awaiting Mechanic Response
+          {isAwaitingEstimate ? "Mechanic Reviewing Your Request" : "Awaiting Mechanic Response"}
         </span>
       </div>
       <div className="flex items-center gap-3 mb-4">
@@ -902,10 +939,135 @@ function PendingBookingCard({ booking }: { booking: DisplayBooking }) {
           <path d="M12 6v6l4 2" stroke="#F59E0B" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
         <p className="text-xs text-amber-400/80">
-          Request sent{booking.scheduledAt ? ` · Scheduled: ${booking.scheduledAt}` : ""}.
-          Waiting for mechanic to accept.
+          {isAwaitingEstimate
+            ? "The mechanic accepted your request and is preparing a cost estimate."
+            : <>Request sent{booking.scheduledAt ? ` · Scheduled: ${booking.scheduledAt}` : ""}. Waiting for mechanic to accept.</>}
         </p>
       </div>
+    </div>
+  );
+}
+
+// ── Estimate Review Card ─────────────────────────────────────────────────────
+// ESTIMATE_SENT — the piece that was previously missing entirely. The owner
+// needs to Accept or Decline before anything else can happen.
+
+function EstimateReviewCard({ booking }: { booking: DisplayEstimateReview }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [declining, setDeclining] = useState(false);
+
+  function handleAccept() {
+    setError(null);
+    startTransition(async () => {
+      try {
+        const { acceptEstimate } = await import("@/app/actions/estimate");
+        await acceptEstimate(booking.id);
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not accept the estimate");
+      }
+    });
+  }
+
+  function handleDecline() {
+    setError(null);
+    startTransition(async () => {
+      try {
+        const { declineEstimate } = await import("@/app/actions/estimate");
+        await declineEstimate(booking.id);
+        router.refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not decline the estimate");
+      }
+    });
+  }
+
+  return (
+    <div className="mb-5 rounded-2xl border border-blue-400/25 bg-blue-400/[0.05] p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+        <span className="text-sm font-semibold text-zinc-100">Repair Estimate Ready</span>
+      </div>
+
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-11 h-11 rounded-xl bg-blue-400/10 border border-blue-400/20
+          flex items-center justify-center shrink-0">
+          <span className="text-sm font-bold text-blue-400">{booking.mechanicInitials}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-zinc-100 text-sm">{booking.mechanicName}</p>
+          <p className="text-xs text-zinc-500 truncate">{booking.vehicleLabel}</p>
+        </div>
+      </div>
+
+      <p className="text-xs text-zinc-400 mb-4 leading-relaxed line-clamp-2">{booking.service}</p>
+
+      <div className="rounded-xl bg-white/[0.03] border border-white/[0.07] p-3.5 mb-4 space-y-1.5">
+        <div className="flex justify-between text-xs">
+          <span className="text-zinc-500">Labor</span>
+          <span className="text-zinc-300">₱{booking.laborCost.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-zinc-500">Parts</span>
+          <span className="text-zinc-300">₱{booking.partsCost.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span>
+        </div>
+        {booking.notes && (
+          <p className="text-xs text-zinc-500 pt-1.5 border-t border-white/[0.06] leading-relaxed">
+            {booking.notes}
+          </p>
+        )}
+        <div className="flex justify-between items-center pt-1.5 border-t border-white/[0.06]">
+          <span className="text-xs font-semibold text-zinc-300">Total</span>
+          <span className="text-base font-bold text-amber-400">
+            ₱{booking.totalCost.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+          </span>
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2 mb-3">{error}</p>
+      )}
+
+      {declining ? (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">Decline this estimate and cancel the booking?</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setDeclining(false)}
+              disabled={isPending}
+              className="flex-1 py-2.5 rounded-xl border border-white/[0.08] text-zinc-400
+                text-sm font-medium disabled:opacity-40">
+              Never mind
+            </button>
+            <button
+              onClick={handleDecline}
+              disabled={isPending}
+              className="flex-1 py-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400
+                text-sm font-semibold active:scale-[0.98] transition-all disabled:opacity-50">
+              {isPending ? "Cancelling…" : "Confirm Decline"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <button
+            onClick={() => setDeclining(true)}
+            disabled={isPending}
+            className="flex-1 py-2.5 rounded-xl border border-white/[0.08] text-zinc-400
+              text-sm font-medium disabled:opacity-40">
+            Decline
+          </button>
+          <button
+            onClick={handleAccept}
+            disabled={isPending}
+            className="flex-1 py-2.5 rounded-xl bg-amber-400 text-zinc-900 text-sm font-bold
+              active:scale-[0.98] transition-all disabled:opacity-50">
+            {isPending ? "Accepting…" : "Accept Estimate"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -914,11 +1076,22 @@ export default function OwnerDashboardView({
   user,
   activeBooking,
   pendingBooking,
+  estimateReview,
   mechanics = [],
   vehicles  = [],
 }: OwnerDashboardProps) {
   const [bookingModalOpen,    setBookingModalOpen]    = useState(false);
   const [preSelectedMechanic, setPreSelectedMechanic] = useState<{ id: string; name: string } | null>(null);
+  const [emergencyModalOpen,  setEmergencyModalOpen]  = useState(false);
+  const [dispatched,          setDispatched]          = useState<DispatchedInfo | null>(null);
+
+  // Poll for fresh server data every 6s, so a mechanic accepting/declining
+  // or advancing status shows up here without a manual page refresh.
+  // No state-sync effect needed here — unlike the mechanic dashboard,
+  // activeBooking/pendingBooking are rendered directly from props rather
+  // than copied into useState, so a fresh prop from router.refresh()
+  // updates the UI automatically.
+  usePolling(6000);
 
   function handleBookMechanic(mechanicId: string, mechanicName: string) {
     setPreSelectedMechanic({ id: mechanicId, name: mechanicName });
@@ -939,9 +1112,16 @@ export default function OwnerDashboardView({
 
       <div className="relative z-10 w-full h-full p-4 pb-28">
         <Header user={user} onBookMechanic={handleBookMechanic} />
-        <ActionButtonsRow onBookService={() => setBookingModalOpen(true)} />
+        <ActionButtonsRow
+          onEmergency={() => setEmergencyModalOpen(true)}
+          onBookService={() => setBookingModalOpen(true)}
+          dispatched={dispatched}
+          onDismissDispatched={() => setDispatched(null)}
+        />
         {activeBooking ? (
           <ActiveBookingCard booking={activeBooking} />
+        ) : estimateReview ? (
+          <EstimateReviewCard booking={estimateReview} />
         ) : pendingBooking ? (
           <PendingBookingCard booking={pendingBooking} />
         ) : (
@@ -961,6 +1141,14 @@ export default function OwnerDashboardView({
           onClose={() => { setBookingModalOpen(false); setPreSelectedMechanic(null); }}
           mechanics={mechanics}
           preSelectedMechanicId={preSelectedMechanic?.id ?? null}
+        />
+      )}  
+
+      {emergencyModalOpen && (
+        <EmergencyModalLazy
+          isOpen={emergencyModalOpen}
+          onClose={() => setEmergencyModalOpen(false)}
+          onDispatched={(info: DispatchedInfo) => setDispatched(info)}
         />
       )}
     </div>

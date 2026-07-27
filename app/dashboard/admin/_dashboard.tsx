@@ -1,7 +1,7 @@
 "use client";
 
 import { useState }        from "react";
-import { approveMechanic, rejectMechanic } from "./admin";
+import { approveMechanic, rejectMechanic, approveShop, rejectShop } from "./admin";
 // ── Exported display types ────────────────────────────────────────────────────
 
 export interface AdminStats {
@@ -22,6 +22,17 @@ export interface PendingMechanic {
   certificationFile: string | null;
   bio:               string | null;
   appliedAt:         string;
+}
+
+export interface PendingShop {
+  shopId:     string;
+  name:       string;
+  ownerName:  string;
+  ownerEmail: string;
+  address:    string;
+  phone:      string | null;
+  services:   string[];
+  appliedAt:  string;
 }
 
 export interface RecentBooking {
@@ -207,12 +218,111 @@ function MechanicVerificationCard({ mechanic }: { mechanic: PendingMechanic }) {
   );
 }
 
+// ── Shop Verification Card ────────────────────────────────────────────────────
+
+function ShopVerificationCard({ shop }: { shop: PendingShop }) {
+  const [status, setStatus] = useState<"idle" | "approving" | "rejecting">("idle");
+
+  async function handleApprove() {
+    setStatus("approving");
+    await approveShop(shop.shopId);
+  }
+
+  async function handleReject() {
+    setStatus("rejecting");
+    await rejectShop(shop.shopId);
+  }
+
+  const initials = shop.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
+
+  return (
+    <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-5">
+      {/* Header */}
+      <div className="flex items-start gap-3.5 mb-4">
+        <div className="w-12 h-12 rounded-xl bg-amber-400/10 border border-amber-400/20
+          flex items-center justify-center shrink-0 text-sm font-bold text-amber-400">
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-zinc-100 text-[15px] leading-tight">{shop.name}</p>
+          <p className="text-xs text-zinc-500 mt-0.5">{shop.ownerName} · {shop.ownerEmail}</p>
+          {shop.phone && (
+            <p className="text-xs text-zinc-600 mt-0.5">{shop.phone}</p>
+          )}
+        </div>
+        <span className="text-[10px] text-zinc-600 shrink-0">{shop.appliedAt}</span>
+      </div>
+
+      {/* Details */}
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <div className="bg-white/[0.03] rounded-xl px-3 py-2.5 border border-white/[0.06] col-span-2">
+          <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-0.5">Address</p>
+          <p className="text-xs font-medium text-zinc-200 truncate">{shop.address}</p>
+        </div>
+
+        {shop.services.length > 0 && (
+          <div className="bg-white/[0.03] rounded-xl px-3 py-2.5 border border-white/[0.06] col-span-2">
+            <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">Services</p>
+            <div className="flex flex-wrap gap-1.5">
+              {shop.services.map((s) => (
+                <span key={s} className="text-[10px] text-zinc-300 bg-white/[0.04]
+                  border border-white/[0.06] px-2 py-0.5 rounded-full">
+                  {s}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2.5">
+        <button
+          onClick={handleReject}
+          disabled={status !== "idle"}
+          className="flex-1 py-2.5 rounded-xl border border-red-500/20 bg-red-500/5
+            text-red-400 text-sm font-semibold
+            hover:bg-red-500/10 active:scale-[0.98]
+            transition-all disabled:opacity-40 disabled:cursor-not-allowed
+            flex items-center justify-center gap-1.5"
+        >
+          {status === "rejecting" ? (
+            <span className="w-4 h-4 rounded-full border-2 border-red-400/30 border-t-red-400 animate-spin" />
+          ) : "Reject"}
+        </button>
+        <button
+          onClick={handleApprove}
+          disabled={status !== "idle"}
+          className="flex-[2] py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/25
+            text-emerald-400 text-sm font-semibold
+            hover:bg-emerald-500/20 active:scale-[0.98]
+            transition-all disabled:opacity-40 disabled:cursor-not-allowed
+            flex items-center justify-center gap-1.5"
+        >
+          {status === "approving" ? (
+            <span className="w-4 h-4 rounded-full border-2 border-emerald-400/30 border-t-emerald-400 animate-spin" />
+          ) : (
+            <>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Approve
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
 interface AdminDashboardProps {
   adminName:         string;
   stats:             AdminStats;
   pendingMechanics:  PendingMechanic[];
+  pendingShops:      PendingShop[];
   recentBookings:    RecentBooking[];
   recentUsers:       AdminUser[];
 }
@@ -221,10 +331,11 @@ export default function AdminDashboardView({
   adminName,
   stats,
   pendingMechanics,
+  pendingShops,
   recentBookings,
   recentUsers,
 }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"queue" | "bookings" | "users">("queue");
+  const [activeTab, setActiveTab] = useState<"queue" | "shops" | "bookings" | "users">("queue");
   const firstName = adminName.split(" ")[0];
 
   return (
@@ -296,6 +407,7 @@ export default function AdminDashboardView({
         <div className="flex bg-white/[0.04] border border-white/[0.06] rounded-2xl p-1 mb-6">
           {([
             { key: "queue",    label: "Verification Queue", count: stats.pendingVerifications },
+            { key: "shops",    label: "Shop Verification",  count: pendingShops.length         },
             { key: "bookings", label: "Bookings",           count: stats.totalBookings        },
             { key: "users",    label: "Recent Users",       count: null                       },
           ] as const).map(({ key, label, count }) => (
@@ -341,6 +453,31 @@ export default function AdminDashboardView({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {pendingMechanics.map((m) => (
                   <MechanicVerificationCard key={m.userId} mechanic={m} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Shop Verification tab ── */}
+        {activeTab === "shops" && (
+          <div>
+            {pendingShops.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-400/10 border border-emerald-400/20
+                  flex items-center justify-center">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M20 6L9 17l-5-5" stroke="#34D399" strokeWidth="2"
+                      strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+                <p className="text-zinc-300 font-semibold">All caught up!</p>
+                <p className="text-sm text-zinc-600">No shops pending verification.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pendingShops.map((s) => (
+                  <ShopVerificationCard key={s.shopId} shop={s} />
                 ))}
               </div>
             )}

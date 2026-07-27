@@ -1,4 +1,4 @@
-import { MechanicSignupForm } from "@/components/mechanic-signup-form";
+import { MechanicSignupForm } from "@/components/auth/mechanic-signup-form";
 
 export default function MechanicSignupPage() {
   return (

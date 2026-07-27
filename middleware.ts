@@ -10,6 +10,7 @@ const PUBLIC_PATHS = [
   "/signIn",
   "/signUp",
   "/mechanicSignUp",
+  "/shop/register",
   "/verify-otp",
   "/setup-2fa",
 ];

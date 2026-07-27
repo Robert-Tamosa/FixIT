@@ -43,6 +43,30 @@ export async function rejectMechanic(userId: string) {
   revalidatePath("/dashboard/admin");
 }
 
+// ── Shop verification ─────────────────────────────────────────────────────────
+
+export async function approveShop(shopId: string) {
+  await requireAdmin();
+
+  await prisma.repairShop.update({
+    where: { id: shopId },
+    data:  { verificationStatus: "APPROVED", isVerified: true },
+  });
+
+  revalidatePath("/dashboard/admin");
+}
+
+export async function rejectShop(shopId: string) {
+  await requireAdmin();
+
+  await prisma.repairShop.update({
+    where: { id: shopId },
+    data:  { verificationStatus: "REJECTED", isVerified: false },
+  });
+
+  revalidatePath("/dashboard/admin");
+}
+
 // ── User role management ──────────────────────────────────────────────────────
 
 export async function changeUserRole(

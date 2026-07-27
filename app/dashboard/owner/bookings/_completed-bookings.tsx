@@ -1,15 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RatingModal } from "./RatingModal";
 import { BottomNav } from "@/components/BottomNav";
 import { useRouter } from "next/navigation";
+import { getInvoice, type DisplayInvoice } from "@/app/actions/invoice";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface CompletedBooking {
   id:              string;
-  mechanicId:      string;
+  mechanicId:      string | null;
   mechanicName:    string;
   mechanicInitials:string;
   vehicleLabel:    string;
@@ -61,9 +62,11 @@ function Stars({ value }: { value: number }) {
 function BookingCard({
   booking,
   onRate,
+  onViewInvoice,
 }: {
-  booking: CompletedBooking;
-  onRate:  (b: CompletedBooking) => void;
+  booking:       CompletedBooking;
+  onRate:        (b: CompletedBooking) => void;
+  onViewInvoice: (bookingId: string) => void;
 }) {
   const rated = booking.rating !== null;
 
@@ -86,6 +89,20 @@ function BookingCard({
         </div>
       </div>
 
+      {/* View invoice — always available for a completed booking, independent of rating status */}
+      <button
+        onClick={() => onViewInvoice(booking.id)}
+        className="w-full mb-3 py-2 rounded-xl border border-white/[0.08] bg-white/[0.02]
+          text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]
+          active:scale-[0.98] transition-all flex items-center justify-center gap-1.5"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M9 12h6m-6 4h6M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
+            stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        View Invoice
+      </button>
+
       {/* Divider */}
       <div className="border-t border-white/[0.06] mb-4" />
 
@@ -105,7 +122,7 @@ function BookingCard({
             </p>
           )}
         </div>
-      ) : (
+      ) : booking.mechanicId ? (
         <button
           onClick={() => onRate(booking)}
           className="w-full py-2.5 rounded-xl border border-amber-400/30 bg-amber-400/[0.06]
@@ -118,7 +135,117 @@ function BookingCard({
           </svg>
           Rate this service
         </button>
+      ) : (
+        <p className="text-xs text-zinc-600 text-center py-2">
+          No mechanic was assigned to this booking — nothing to rate.
+        </p>
       )}
+    </div>
+  );
+}
+
+// ── Invoice view modal ──────────────────────────────────────────────────────
+
+function InvoiceViewModal({
+  bookingId,
+  onClose,
+}: {
+  bookingId: string | null;
+  onClose:   () => void;
+}) {
+  const [invoice,  setInvoice]  = useState<DisplayInvoice | null>(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!bookingId) return;
+    setInvoice(null);
+    setLoading(true);
+    setError(null);
+    getInvoice(bookingId)
+      .then((inv) => setInvoice(inv))
+      .catch((e) => setError(e instanceof Error ? e.message : "Could not load invoice"))
+      .finally(() => setLoading(false));
+  }, [bookingId]);
+
+  if (!bookingId) return null;
+
+  function formatPHP(n: number) {
+    return `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center sm:justify-center
+      bg-black/75 backdrop-blur-sm px-4 pb-4 sm:pb-0"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-md rounded-3xl border border-white/[0.08]
+        bg-[#0e0e0f] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-zinc-800/60">
+          <h2 className="text-base font-semibold text-zinc-100">Invoice</h2>
+          <button onClick={onClose} aria-label="Close"
+            className="w-8 h-8 rounded-lg flex items-center justify-center
+              text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.05] transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-5 overflow-y-auto">
+          {loading ? (
+            <p className="text-sm text-zinc-500 py-8 text-center">Loading…</p>
+          ) : error ? (
+            <p className="text-sm text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2">{error}</p>
+          ) : !invoice ? (
+            <p className="text-sm text-zinc-500 py-8 text-center">
+              No invoice has been generated for this booking yet.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-zinc-500">Invoice #{invoice.invoiceNumber}</p>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                  invoice.paymentStatus === "PAID"
+                    ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20"
+                    : "text-amber-400 bg-amber-400/10 border-amber-400/20"
+                }`}>
+                  {invoice.paymentStatus === "PAID" ? "Paid" : "Unpaid"}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {invoice.items.map((item) => (
+                  <div key={item.id} className="flex justify-between text-sm">
+                    <span className="text-zinc-400">
+                      {item.description} {item.quantity > 1 ? `×${item.quantity}` : ""}
+                    </span>
+                    <span className="text-zinc-200">{formatPHP(item.amount)}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-between pt-3 border-t border-white/[0.08]">
+                <span className="text-sm font-semibold text-zinc-300">Total</span>
+                <span className="text-lg font-bold text-amber-400">{formatPHP(invoice.totalAmount)}</span>
+              </div>
+
+              {invoice.notes && (
+                <p className="text-xs text-zinc-500 bg-white/[0.02] border border-white/[0.06]
+                  rounded-xl px-3 py-2.5">
+                  {invoice.notes}
+                </p>
+              )}
+
+              <p className="text-[11px] text-zinc-600 text-center">
+                Generated {new Date(invoice.generatedAt).toLocaleDateString("en-PH", {
+                  month: "short", day: "numeric", year: "numeric",
+                })} · Payment is collected in cash at time of service
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -133,6 +260,7 @@ export default function CompletedBookingsView({
   const [bookings, setBookings]     = useState(initialBookings);
   const [selected, setSelected]     = useState<CompletedBooking | null>(null);
   const [filter, setFilter]         = useState<"ALL" | "RATED" | "UNRATED">("ALL");
+  const [viewingInvoiceFor, setViewingInvoiceFor] = useState<string | null>(null);
 
   const filtered = bookings.filter((b) => {
     if (filter === "RATED")   return b.rating !== null;
@@ -296,7 +424,12 @@ export default function CompletedBookingsView({
         ) : (
           <div className="flex flex-col gap-3">
             {filtered.map((b) => (
-              <BookingCard key={b.id} booking={b} onRate={setSelected} />
+              <BookingCard
+                key={b.id}
+                booking={b}
+                onRate={setSelected}
+                onViewInvoice={setViewingInvoiceFor}
+              />
             ))}
           </div>
         )}
@@ -314,6 +447,12 @@ export default function CompletedBookingsView({
           onSuccess={handleSuccess}
         />
       )}
+
+      {/* Invoice modal */}
+      <InvoiceViewModal
+        bookingId={viewingInvoiceFor}
+        onClose={() => setViewingInvoiceFor(null)}
+      />
 
       <AIDiagnosticChathead />
 

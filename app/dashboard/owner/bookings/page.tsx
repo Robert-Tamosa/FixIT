@@ -46,9 +46,9 @@ export default async function CompletedBookingsPage() {
 
   const bookings: CompletedBooking[] = rawBookings.map((b) => ({
     id:               b.id,
-    mechanicId:       b.mechanic.id,
-    mechanicName:     b.mechanic.name     ?? "Unknown Mechanic",
-    mechanicInitials: getInitials(b.mechanic.name),
+    mechanicId:       b.mechanic?.id ?? null,
+    mechanicName:     b.mechanic?.name     ?? "Unassigned",
+    mechanicInitials: getInitials(b.mechanic?.name ?? null),
     vehicleLabel:     `${b.vehicle.brand} ${b.vehicle.model}`,
     problem:          b.problemDescription,
     price:            formatPrice(b.price),

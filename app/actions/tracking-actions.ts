@@ -56,10 +56,10 @@ export async function getMechanicLocation(bookingId: string) {
 
   if (!booking) return null;
 
-  const profile = booking.mechanic.mechanicProfile;
+  const profile = booking.mechanic?.mechanicProfile;
   return {
     status:       booking.status,
-    mechanicName: booking.mechanic.name ?? "Mechanic",
+    mechanicName: booking.mechanic?.name ?? "Mechanic",
     mechanic: profile ? {
       lat:       profile.latitude,
       lng:       profile.longitude,
@@ -71,6 +71,8 @@ export async function getMechanicLocation(bookingId: string) {
     },
   };
 }
+
+export type MechanicLocationResult = Awaited<ReturnType<typeof getMechanicLocation>>;
 
 // ── Save owner's pinned location on a booking ─────────────────────────────────
 
@@ -118,8 +120,8 @@ export async function checkGeofence(
 
   if (
     !booking?.ownerLat || !booking?.ownerLng ||
-    !booking.mechanic.mechanicProfile?.latitude ||
-    !booking.mechanic.mechanicProfile?.longitude
+    !booking.mechanic?.mechanicProfile?.latitude ||
+    !booking.mechanic?.mechanicProfile?.longitude
   ) {
     return { inside: false, distanceMeters: null };
   }

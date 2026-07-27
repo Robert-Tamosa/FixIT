@@ -289,14 +289,23 @@ export function AuthForm({ mode }: AuthFormProps) {
 
         </div>
 
-        {/* ── Mechanic / shop link ──────────────────────────────────────────── */}
-        <p className="text-center text-xs text-zinc-600 mt-8 pb-10">
-          Are you a mechanic or shop?{" "}
-          <Link href="/mechanicSignUp"
-            className="text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
-            Register here
-          </Link>
-        </p>
+        {/* ── Mechanic / shop links ─────────────────────────────────────────── */}
+        <div className="text-center text-xs text-zinc-600 mt-8 pb-10 space-y-1.5">
+          <p>
+            Are you a mechanic?{" "}
+            <Link href="/mechanicSignUp"
+              className="text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
+              Register here
+            </Link>
+          </p>
+          <p>
+            Own a repair shop?{" "}
+            <Link href="/shopRegister"
+              className="text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
+              Register your shop
+            </Link>
+          </p>
+        </div>
 
       </div>
       </div>

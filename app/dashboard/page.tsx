@@ -28,6 +28,16 @@ export default async function DashboardPage() {
     case "MECHANIC":
       redirect("/dashboard/mechanic");
 
+    case "SHOP_OWNER": {
+      const shop = await prisma.repairShop.findUnique({
+        where: { ownerId: session.user.id },
+        select: { verificationStatus: true },
+      });
+      if (!shop) redirect("/shop/register");
+      if (shop.verificationStatus !== "APPROVED") redirect("/shop/pending");
+      redirect("/dashboard/shop");
+    }
+
     case "OWNER":
     default:
       redirect("/dashboard/owner");

@@ -4,11 +4,14 @@ import { headers } from "next/headers";
 import MechanicDashboardView, {
   type SessionMechanic,
   type IncomingRequest,
+  type NeedsEstimateJob,
+  type AwaitingEstimateJob,
   type ActiveJob,
   type UpcomingJob,
   type RecentReview,
   type MechanicStats,
 } from "./_mechanic-dashboard";
+import { toPlainNumber } from "@/lib/invoice-format";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +62,7 @@ export default async function MechanicDashboardPage() {
           specialization: true,
           isVerified:     true,
           isAvailable:    true,
+          shopId:         true,
         },
       },
     },
@@ -72,6 +76,8 @@ export default async function MechanicDashboardPage() {
     phone:       (session.user as { phone?: string | null }).phone,
     specialty:   rawMechanic.mechanicProfile?.specialization  ?? "General Mechanic",
     isVerified:  rawMechanic.mechanicProfile?.isVerified      ?? false,
+    isAvailable: rawMechanic.mechanicProfile?.isAvailable     ?? false,
+    hasShop:     rawMechanic.mechanicProfile?.shopId != null,
   };
 
   // ── 2. Incoming requests (PENDING bookings assigned to this mechanic) ──────
@@ -100,11 +106,65 @@ export default async function MechanicDashboardPage() {
     receivedMinsAgo: minsAgo(b.createdAt),
   }));
 
-  // ── 3. Active job (CONFIRMED | EN_ROUTE | IN_PROGRESS) ────────────────────
+  // ── 3a. Needs estimate (CONFIRMED — mechanic accepted, hasn't sent a
+  //        cost estimate yet). This used to be treated as "active job" and
+  //        would show the travel/progress tracker immediately — wrong, per
+  //        the estimate step in the booking flow.
+  const rawNeedsEstimate = await prisma.booking.findMany({
+    where: {
+      mechanicId: session.user.id,
+      status:     "CONFIRMED",
+    },
+    include: {
+      owner:   { select: { name: true } },
+      vehicle: { select: { brand: true, model: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const needsEstimateJobs: NeedsEstimateJob[] = rawNeedsEstimate.map((b) => ({
+    id:            b.id,
+    ownerName:     b.owner.name   ?? "Unknown",
+    ownerInitials: getInitials(b.owner.name),
+    vehicleLabel:  `${b.vehicle.brand} ${b.vehicle.model}`,
+    problem:       b.problemDescription,
+  }));
+
+  // ── 3b. Awaiting owner's response (ESTIMATE_SENT — estimate submitted,
+  //        nothing for the mechanic to do but wait for the owner to accept
+  //        or decline it).
+  const rawAwaitingEstimate = await prisma.booking.findMany({
+    where: {
+      mechanicId: session.user.id,
+      status:     "ESTIMATE_SENT",
+    },
+    include: {
+      owner:    { select: { name: true } },
+      vehicle:  { select: { brand: true, model: true } },
+      estimate: { select: { laborCost: true, partsCost: true, totalCost: true, notes: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const awaitingEstimateJobs: AwaitingEstimateJob[] = rawAwaitingEstimate.map((b) => ({
+    id:            b.id,
+    ownerName:     b.owner.name   ?? "Unknown",
+    ownerInitials: getInitials(b.owner.name),
+    vehicleLabel:  `${b.vehicle.brand} ${b.vehicle.model}`,
+    problem:       b.problemDescription,
+    laborCost:     b.estimate ? toPlainNumber(b.estimate.laborCost) : 0,
+    partsCost:     b.estimate ? toPlainNumber(b.estimate.partsCost) : 0,
+    totalCost:     b.estimate ? toPlainNumber(b.estimate.totalCost) : 0,
+    notes:         b.estimate?.notes ?? null,
+  }));
+
+  // ── 3c. Active job (ESTIMATE_ACCEPTED | EN_ROUTE | IN_PROGRESS) — owner
+  //        has accepted the estimate, this is what actually gets the
+  //        travel/progress tracker now.
   const rawActive = await prisma.booking.findFirst({
     where: {
       mechanicId: session.user.id,
-      status:     { in: ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"] },
+      status:     { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"] },
     },
     include: {
       owner:   { select: { name: true } },
@@ -126,11 +186,14 @@ export default async function MechanicDashboardPage() {
       }
     : null;
 
-  // ── 4. Upcoming confirmed jobs (future, beyond the active one) ─────────────
+  // ── 4. Upcoming jobs (future, estimate already accepted, beyond the
+  //        currently-active one). Previously filtered on CONFIRMED, which
+  //        now means "still needs an estimate" — fixed to ESTIMATE_ACCEPTED
+  //        so this only shows jobs that are genuinely locked in.
   const rawUpcoming = await prisma.booking.findMany({
     where: {
       mechanicId:  session.user.id,
-      status:      "CONFIRMED",
+      status:      "ESTIMATE_ACCEPTED",
       scheduledAt: { gt: new Date() },
       ...(rawActive ? { id: { not: rawActive.id } } : {}),
     },
@@ -233,6 +296,8 @@ export default async function MechanicDashboardPage() {
       mechanic={mechanic}
       stats={stats}
       incomingRequests={incomingRequests}
+      needsEstimateJobs={needsEstimateJobs}
+      awaitingEstimateJobs={awaitingEstimateJobs}
       activeJob={activeJob}
       upcomingJobs={upcomingJobs}
       recentReviews={recentReviews}

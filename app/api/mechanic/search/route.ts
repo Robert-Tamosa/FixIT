@@ -6,7 +6,6 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-
   const q              = searchParams.get("q")?.trim()            ?? "";
   const specialization = searchParams.get("specialization")?.trim() ?? "";
   const availableOnly  = searchParams.get("available")             === "true";

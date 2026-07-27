@@ -39,22 +39,46 @@ export function MechanicSignupForm() {
     setError("");
 
     try {
-      await authClient.signUp.email({ name: fullName, email, password });
-      await authClient.signIn.email({ email, password });
+      if (specializations.length === 0) {
+        setError("Please select at least one specialization.");
+        return;
+      }
+
+      const { error: signUpError } = await authClient.signUp.email({ name: fullName, email, password });
+      if (signUpError) {
+        setError(signUpError.message ?? "Could not create account. Try a different email.");
+        return;
+      }
+
+      const { error: signInError } = await authClient.signIn.email({ email, password });
+      if (signInError) {
+        setError("Account created, but sign-in failed. Please try signing in manually.");
+        return;
+      }
 
       const session = await authClient.getSession();
+      if (!session.data?.user.id) {
+        setError("Could not verify your session. Please try signing in manually.");
+        return;
+      }
 
-      await fetch("/api/mechanic/register", {
+      const res = await fetch("/api/mechanic/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId:         session.data?.user.id,
+          userId:         session.data.user.id,
           yearsExperience,
           bio,
           specialization: specializations.join(","),
           shopName,
         }),
       });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Could not complete registration. Please try again.");
+        return;
+      }
 
       router.push("/signIn");
     } catch {

@@ -14,6 +14,8 @@ enum Role {
   OWNER
   MECHANIC
   ADMIN
+  SHOP_OWNER
+
 }
 
 enum VerificationStatus {
@@ -22,13 +24,26 @@ enum VerificationStatus {
   REJECTED
 }
 
+enum PaymentStatus {
+  UNPAID
+  PAID
+}
+
 enum BookingStatus {
-  PENDING
-  CONFIRMED
-  EN_ROUTE
-  IN_PROGRESS
-  DONE
+  PENDING             // owner submitted the booking request
+  DECLINED            // mechanic declined — owner must choose another mechanic
+  CONFIRMED           // mechanic accepted — must send a cost estimate next
+  ESTIMATE_SENT       // mechanic sent an estimate — waiting on owner
+  ESTIMATE_ACCEPTED   // owner accepted the estimate — mechanic may travel
+  EN_ROUTE            // mechanic traveling to the owner
+  IN_PROGRESS         // repair underway
+  DONE                // repair completed — invoice generated
   CANCELLED
+}
+
+enum BookingType {
+  SCHEDULED    // owner manually picks a mechanic (existing flow)
+  EMERGENCY    // system auto-assigns from ranked candidates
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,8 +124,10 @@ model User {
   vehicles           Vehicle[]         @relation("UserVehicles")
   bookingsAsOwner    Booking[]         @relation("OwnerBookings")
   bookingsAsMechanic Booking[]         @relation("MechanicBookings")
-  ratingsGiven       MechanicRating[]  @relation("GivenRatings")    // NEW
+  ratingsGiven       MechanicRating[]  @relation("GivenRatings")
   ratingsReceived    MechanicRating[]  @relation("ReceivedRatings")  // NEW
+  shopOwned          RepairShop?       @relation("ShopOwner")
+  shopRatingsGiven   ShopRating[]      @relation("ShopRatingsGiven")
 }
 
 model MechanicProfile {
@@ -128,9 +145,12 @@ model MechanicProfile {
   longitude          Float?
   locationUpdatedAt  DateTime?                                 // when location was last pushed
   createdAt          DateTime                 @default(now())
+  shopId             String?                                   //   Note: shopId = NULL means an independent mechanic.
   updatedAt          DateTime                 @updatedAt
   user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   specializations    MechanicSpecialization[]
+  shop               RepairShop?              @relation(fields: [shopId], references: [id])
+
 }
 
 model Vehicle {
@@ -157,33 +177,35 @@ model Vehicle {
 }
 
 model Booking {
+  aiMatchScore       Float?
+  bookingType        BookingType @default(SCHEDULED)
+  declinedByIds      String[]    @default([])
   id                 String        @id @default(cuid())
   ownerId            String
-  mechanicId         String
+  mechanicId         String?
   vehicleId          String
   problemDescription String
-  isEmergency  Boolean @default(false)
-  address      String?
-  ownerLat     Float?                           // owner's pinned location
-  ownerLng     Float?
-
-  // CHANGED: String → BookingStatus enum
+  isEmergency        Boolean @default(false)
+  address            String?
+  ownerLat           Float?                           // owner's pinned location
+  ownerLng           Float?
+  shopId             String?
   status             BookingStatus @default(PENDING)
-
-  // NEW fields ↓
-  scheduledAt  DateTime?                        // when the job is scheduled
-  price        Decimal?  @db.Decimal(10, 2)    // agreed/estimated price in ₱
-  notes        String?                          // extra notes from owner/mechanic
-  completedAt  DateTime?                        // set when status → DONE
-  updatedAt    DateTime  @updatedAt
-
-  createdAt    DateTime  @default(now())
+  scheduledAt        DateTime?                        // when the job is scheduled
+  price              Decimal?  @db.Decimal(10, 2)    // agreed/estimated price in ₱
+  notes              String?                          // extra notes from owner/mechanic
+  completedAt        DateTime?                        // set when status → DONE
+  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime  @default(now())
 
   // Relations
-  mechanic     User           @relation("MechanicBookings", fields: [mechanicId], references: [id])
-  owner        User           @relation("OwnerBookings",    fields: [ownerId],    references: [id])
-  vehicle      Vehicle        @relation(fields: [vehicleId], references: [id])
-  rating       MechanicRating?                  // NEW — one rating per booking
+  mechanic           User?          @relation("MechanicBookings", fields: [mechanicId], references: [id])
+  owner              User           @relation("OwnerBookings",    fields: [ownerId],    references: [id])
+  vehicle            Vehicle        @relation(fields: [vehicleId], references: [id])
+  rating             MechanicRating?                  // NEW — one rating per booking
+  shopRating         ShopRating?    @relation("ShopRatingBooking")
+  estimate           CostEstimate?
+  invoice            Invoice?
 }
 
 // NEW — owner rates a mechanic after a booking is completed
@@ -215,4 +237,85 @@ model MechanicSpecialization {
   specialization   Specialization  @relation(fields: [specializationId], references: [id])
 
   @@id([mechanicId, specializationId])
+}
+
+model RepairShop {
+  id                 String              @id @default(cuid())
+  ownerId            String              @unique   // User with role SHOP_OWNER — business-only, does not repair
+  name               String
+  description        String?
+  address            String
+  latitude           Float?
+  longitude          Float?
+  phone              String?
+  email              String?
+  logoUrl            String?
+  operatingHours     Json?               // { mon: "8:00-18:00", tue: "...", ... }
+  services           String[]            @default([])   // e.g. ["Engine Repair", "Tire Service"]
+  verificationStatus VerificationStatus  @default(PENDING)
+  isVerified         Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  owner              User                @relation("ShopOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  mechanics          MechanicProfile[]
+  ratings            ShopRating[]
+}
+
+model ShopRating {
+  id         String   @id @default(cuid())
+  shopId     String
+  ownerId    String
+  bookingId  String   @unique
+  rating     Int                              // 1–5 stars
+  comment    String?
+  sentiment  String?  @default("NEUTRAL")
+  createdAt  DateTime @default(now())
+
+  shop       RepairShop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  owner      User       @relation("ShopRatingsGiven", fields: [ownerId], references: [id])
+  booking    Booking    @relation("ShopRatingBooking", fields: [bookingId], references: [id])
+}
+
+model CostEstimate {
+  id          String    @id @default(cuid())
+  bookingId   String    @unique
+  laborCost   Decimal   @db.Decimal(10, 2)
+  partsCost   Decimal   @db.Decimal(10, 2) @default(0)
+  totalCost   Decimal   @db.Decimal(10, 2)
+  notes       String?
+  isAccepted  Boolean   @default(false)
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  bookingId     String        @unique
+  invoiceNumber String        @unique
+  laborCost     Decimal       @db.Decimal(10, 2)
+  partsCost     Decimal       @db.Decimal(10, 2) @default(0)
+  totalAmount   Decimal       @db.Decimal(10, 2)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paidAt        DateTime?
+  notes         String?
+  generatedAt   DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  booking       Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  items         InvoiceItem[]
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int      @default(1)
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  amount      Decimal  @db.Decimal(10, 2)
+
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }

@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useRef } from "react";
 import { addVehicle, type AddVehicleState } from "@/app/actions/add-vehicle";
+import React from "react";
 
 interface Vehicle {
   id: string;
@@ -313,6 +314,3 @@ export default function VehicleSummaryCard({
     </>
   );
 }
-
-// React import needed for useState
-import React from "react";

@@ -4,15 +4,17 @@ import { headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import MechanicTrackingView, { type MechanicTrackingProps } from "./_mechanic-tracking";
 
-interface Props { params: { bookingId: string } }
+interface Props { params: Promise<{ bookingId: string }> }
 
 export default async function MechanicTrackingPage({ params }: Props) {
+  const { bookingId } = await params;
+
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/signIn");
 
   const booking = await prisma.booking.findFirst({
     where: {
-      id:         params.bookingId,
+      id:         bookingId,
       mechanicId: session.user.id,
       status:     { in: ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS", "DONE"] },
     },

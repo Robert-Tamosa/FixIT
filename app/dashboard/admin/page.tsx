@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import AdminDashboardView, {
   type AdminStats,
   type PendingMechanic,
+  type PendingShop,
   type RecentBooking,
   type AdminUser,
 } from "./_dashboard";
@@ -68,7 +69,35 @@ export default async function AdminDashboardPage() {
     }),
   }));
 
-  // ── 3. Recent bookings ─────────────────────────────────────────────────────
+  // ── 3. Pending shop verification queue ─────────────────────────────────────
+  const rawPendingShops = await prisma.repairShop.findMany({
+    where: { verificationStatus: "PENDING" },
+    select: {
+      id:        true,
+      name:      true,
+      address:   true,
+      phone:     true,
+      services:  true,
+      createdAt: true,
+      owner: { select: { name: true, email: true } },
+    },
+    orderBy: { createdAt: "asc" }, // oldest applications first
+  });
+
+  const pendingShops: PendingShop[] = rawPendingShops.map((s) => ({
+    shopId:     s.id,
+    name:       s.name,
+    ownerName:  s.owner.name  ?? "Unknown",
+    ownerEmail: s.owner.email,
+    address:    s.address,
+    phone:      s.phone,
+    services:   s.services,
+    appliedAt:  s.createdAt.toLocaleDateString("en-PH", {
+      month: "short", day: "numeric", year: "numeric",
+    }),
+  }));
+
+  // ── 4. Recent bookings ─────────────────────────────────────────────────────
   const rawBookings = await prisma.booking.findMany({
     take:    15,
     orderBy: { createdAt: "desc" },
@@ -95,7 +124,7 @@ export default async function AdminDashboardPage() {
     }),
   }));
 
-  // ── 4. Recent users ────────────────────────────────────────────────────────
+  // ── 5. Recent users ────────────────────────────────────────────────────────
   const rawUsers = await prisma.user.findMany({
     take:    20,
     orderBy: { createdAt: "desc" },
@@ -128,6 +157,7 @@ export default async function AdminDashboardPage() {
       adminName={session.user.name ?? "Admin"}
       stats={stats}
       pendingMechanics={pendingMechanics}
+      pendingShops={pendingShops}
       recentBookings={recentBookings}
       recentUsers={recentUsers}
     />

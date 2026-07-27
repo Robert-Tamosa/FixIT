@@ -60,12 +60,20 @@ export async function declineBooking(bookingId: string) {
 }
 
 // ── Advance booking status ────────────────────────────────────────────────────
-// CONFIRMED → EN_ROUTE → IN_PROGRESS → DONE
+// ESTIMATE_ACCEPTED → EN_ROUTE → IN_PROGRESS → DONE
+//
+// NOTE: this intentionally does NOT start from CONFIRMED anymore. CONFIRMED
+// now means "mechanic accepted the request, needs to send an estimate" —
+// see estimate.ts's createEstimate(), which requires status === CONFIRMED
+// and moves it to ESTIMATE_SENT. The booking only becomes travel-eligible
+// once the owner accepts that estimate (estimate.ts's acceptEstimate(),
+// ESTIMATE_SENT → ESTIMATE_ACCEPTED). Previously this map let CONFIRMED
+// jump straight to EN_ROUTE, which skipped the estimate step entirely.
 
 const NEXT_STATUS: Record<string, string> = {
-  CONFIRMED:   "EN_ROUTE",
-  EN_ROUTE:    "IN_PROGRESS",
-  IN_PROGRESS: "DONE",
+  ESTIMATE_ACCEPTED: "EN_ROUTE",
+  EN_ROUTE:           "IN_PROGRESS",
+  IN_PROGRESS:        "DONE",
 };
 
 export async function advanceBookingStatus(bookingId: string) {
@@ -76,7 +84,7 @@ export async function advanceBookingStatus(bookingId: string) {
     where: {
       id:         bookingId,
       mechanicId: session.user.id,
-      status:     { in: ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"] },
+      status:     { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"] },
     },
   });
 
