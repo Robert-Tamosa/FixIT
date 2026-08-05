@@ -65,6 +65,7 @@ export interface ActiveJob {
   vehicleLabel: string;
   problem: string;
   status: "ESTIMATE_ACCEPTED" | "EN_ROUTE" | "IN_PROGRESS";
+  isEmergency: boolean;
   scheduledAt: string | null;
   price: string;
   notes?: string | null;
@@ -1142,21 +1143,36 @@ function ActiveJobCard({
         </button>
 
         {/* Advance status */}
-        {job.status !== "IN_PROGRESS" ? (
-          <button
-            onClick={() => onAdvanceStatus(job.id)}
-            className="flex-1 py-2.5 rounded-xl bg-amber-500 text-sm font-bold text-black
-              hover:bg-amber-400 active:scale-[0.98] transition-all
-              shadow-[0_4px_20px_rgba(245,158,11,0.2)]">
-            {NEXT_LABEL[job.status]}
-          </button>
-        ) : (
+        {job.status === "IN_PROGRESS" ? (
           <button
             onClick={() => onAdvanceStatus(job.id)}
             className="flex-1 py-2.5 rounded-xl bg-emerald-500 text-sm font-bold text-black
               hover:bg-emerald-400 active:scale-[0.98] transition-all
               shadow-[0_4px_20px_rgba(52,211,153,0.2)]">
             Mark Complete ✓
+          </button>
+        ) : job.status === "EN_ROUTE" && job.isEmergency ? (
+          // Emergency jobs auto-advance EN_ROUTE -> IN_PROGRESS via the
+          // geofence check on the tracking page once the mechanic is within
+          // range — no manual tap needed or offered here for this specific
+          // transition. Still shows something (not an empty gap) so it's
+          // clear this isn't a missing button, it's intentional.
+          <div className="flex-1 py-2.5 rounded-xl bg-orange-500/10 border border-orange-500/25
+            flex items-center justify-center gap-1.5">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
+                stroke="#FB923C" strokeWidth="1.6" />
+              <circle cx="12" cy="10" r="3" stroke="#FB923C" strokeWidth="1.6" />
+            </svg>
+            <span className="text-xs text-orange-300 font-semibold">Auto-starts on arrival</span>
+          </div>
+        ) : (
+          <button
+            onClick={() => onAdvanceStatus(job.id)}
+            className="flex-1 py-2.5 rounded-xl bg-amber-500 text-sm font-bold text-black
+              hover:bg-amber-400 active:scale-[0.98] transition-all
+              shadow-[0_4px_20px_rgba(245,158,11,0.2)]">
+            {NEXT_LABEL[job.status]}
           </button>
         )}
       </div>

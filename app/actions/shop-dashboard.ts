@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { toPlainNumber } from "@/lib/invoice-format";
+import { createNotification } from "@/app/actions/notifications";
 
 async function requireShopOwner() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -138,6 +139,71 @@ export async function getShopBookings(statusFilter?: string): Promise<DisplaySho
   }));
 }
 
+/**
+ * Shop accepts a PENDING booking request as a business — a distinct step
+ * from assigning a specific mechanic. PENDING -> CONFIRMED. The shop can
+ * assign (or wait to assign) a mechanic separately afterward via
+ * assignMechanicToBooking(); createEstimate() only needs mechanicId to be
+ * set by the time an estimate is actually submitted, not at acceptance time,
+ * so accept-then-assign-later is a valid sequence.
+ */
+export async function acceptShopBooking(bookingId: string) {
+  const { shopId } = await requireShopOwner();
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { vehicle: { select: { brand: true, model: true } } },
+  });
+  if (!booking || booking.shopId !== shopId) throw new Error("Booking not found for this shop");
+  if (booking.status !== "PENDING") throw new Error("Booking already actioned");
+
+  await prisma.booking.update({
+    where: { id: bookingId },
+    data: { status: "CONFIRMED" },
+  });
+
+  await createNotification({
+    userId: booking.ownerId,
+    type: "BOOKING_ACCEPTED",
+    title: "Shop accepted your request",
+    body: `Your ${booking.vehicle.brand} ${booking.vehicle.model} booking was accepted. A mechanic will be assigned shortly.`,
+    link: "/dashboard/owner",
+  });
+
+  revalidatePath("/dashboard/shop");
+  revalidatePath("/dashboard/owner");
+  return { success: true };
+}
+
+/** Shop declines a PENDING booking request. PENDING -> CANCELLED. */
+export async function declineShopBooking(bookingId: string) {
+  const { shopId } = await requireShopOwner();
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { vehicle: { select: { brand: true, model: true } } },
+  });
+  if (!booking || booking.shopId !== shopId) throw new Error("Booking not found for this shop");
+  if (booking.status !== "PENDING") throw new Error("Booking already actioned");
+
+  await prisma.booking.update({
+    where: { id: bookingId },
+    data: { status: "CANCELLED" },
+  });
+
+  await createNotification({
+    userId: booking.ownerId,
+    type: "BOOKING_DECLINED",
+    title: "Booking request declined",
+    body: `Your ${booking.vehicle.brand} ${booking.vehicle.model} request wasn't accepted by the shop. Try another mechanic or shop.`,
+    link: "/dashboard/owner",
+  });
+
+  revalidatePath("/dashboard/shop");
+  revalidatePath("/dashboard/owner");
+  return { success: true };
+}
+
 export interface DisplayAssignableMechanic {
   id: string;
   name: string;
@@ -166,13 +232,17 @@ export async function getAssignableMechanics(): Promise<DisplayAssignableMechani
  * Assigns a mechanic to a booking that came in as "Any Available Mechanic"
  * (booked directly to the shop, mechanicId null). Also covers reassignment —
  * changing an already-assigned mechanic to a different one on the same shop,
- * as long as the job hasn't finished.
+ * as long as the job hasn't finished. Requires the booking to already be
+ * accepted (not PENDING) — accept/decline is a separate step now.
  */
 export async function assignMechanicToBooking(bookingId: string, mechanicId: string) {
   const { shopId } = await requireShopOwner();
 
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
   if (!booking || booking.shopId !== shopId) throw new Error("Booking not found for this shop");
+  if (booking.status === "PENDING") {
+    throw new Error("Accept this booking before assigning a mechanic");
+  }
   if (booking.status === "DONE" || booking.status === "CANCELLED") {
     throw new Error("Cannot assign a mechanic to a finished or cancelled booking");
   }
@@ -184,7 +254,7 @@ export async function assignMechanicToBooking(bookingId: string, mechanicId: str
 
   await prisma.booking.update({
     where: { id: bookingId },
-    data: { mechanicId, status: booking.mechanicId ? booking.status : "PENDING" },
+    data: { mechanicId },
   });
 
   revalidatePath("/dashboard/shop");
@@ -224,8 +294,8 @@ export async function findIndependentMechanicByEmail(email: string): Promise<Dis
   });
 
   if (!user || user.role !== "MECHANIC" || !user.mechanicProfile) return null;
-  if (user.mechanicProfile.shopId !== null) return null; // already affiliated elsewhere
-  if (!user.mechanicProfile.isVerified) return null; // don't surface unverified accounts
+  if (user.mechanicProfile.shopId !== null) return null;
+  if (!user.mechanicProfile.isVerified) return null;
 
   return {
     userId: user.id,

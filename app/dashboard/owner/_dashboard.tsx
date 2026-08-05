@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback, useTransition } from "react";
 import { usePolling } from "@/app/hooks/usePolling";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const BookingModalLazy = dynamic(
   () => import("./bookingModal").then((m) => m.BookingModal),
@@ -194,17 +195,7 @@ function Header({
           </p>
         </div>
         <div className="flex items-center gap-2.5">
-          <button aria-label="Notifications"
-            className="relative w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08]
-              flex items-center justify-center hover:bg-white/[0.07] transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
-                stroke="#71717A" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"
-                stroke="#71717A" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-amber-400 rounded-full border-2 border-[#080909]" />
-          </button>
+          <NotificationBell />
           <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20
             flex items-center justify-center">
             <span className="text-[11px] font-bold text-amber-400">{initials}</span>
@@ -416,7 +407,7 @@ function ActionButtonsRow({
         </svg>
         <div className="text-left">
           <p className="text-[#080909] font-bold text-[13px] leading-tight">Book a Service</p>
-          <p className="text-black/50 text-[11px] mt-0.5">Schedule a mechanic</p>
+          <p className="text-black/50 text-[11px] mt-0.5">Schedule a service</p>
         </div>
       </button>
     </div>
@@ -1084,6 +1075,13 @@ export default function OwnerDashboardView({
   const [preSelectedMechanic, setPreSelectedMechanic] = useState<{ id: string; name: string } | null>(null);
   const [emergencyModalOpen,  setEmergencyModalOpen]  = useState(false);
   const [dispatched,          setDispatched]          = useState<DispatchedInfo | null>(null);
+  // Tracks whether we've actually confirmed (via a poll) that the dispatched
+  // booking is currently live, before we're willing to auto-clear it. Without
+  // this, the very first poll after dispatch — before the booking has
+  // propagated into activeBooking/pendingBooking/estimateReview — would look
+  // identical to "the booking finished," and the banner would vanish within
+  // seconds of appearing.
+  const dispatchConfirmedLiveRef = useRef(false);
 
   // Poll for fresh server data every 6s, so a mechanic accepting/declining
   // or advancing status shows up here without a manual page refresh.
@@ -1092,6 +1090,35 @@ export default function OwnerDashboardView({
   // than copied into useState, so a fresh prop from router.refresh()
   // updates the UI automatically.
   usePolling(6000);
+
+  // "Help is on the way" used to persist forever once shown — it was pure
+  // client state, set once by EmergencyModal's onDispatched callback, with
+  // no link back to the booking's real status. This ties it to the actual
+  // server data that usePolling already refreshes every 6s: once the
+  // dispatched booking is confirmed no longer active/pending/awaiting-
+  // estimate (i.e. it reached DONE or CANCELLED), the banner clears itself.
+  useEffect(() => {
+    if (!dispatched) {
+      dispatchConfirmedLiveRef.current = false;
+      return;
+    }
+
+    const stillOngoing =
+      activeBooking?.id === dispatched.bookingId ||
+      pendingBooking?.id === dispatched.bookingId ||
+      estimateReview?.id === dispatched.bookingId;
+
+    if (stillOngoing) {
+      dispatchConfirmedLiveRef.current = true;
+    } else if (dispatchConfirmedLiveRef.current) {
+      // Was confirmed live on a previous poll, now it's gone from all three
+      // "current booking" slots — finished or cancelled. Safe to clear.
+      setDispatched(null);
+      dispatchConfirmedLiveRef.current = false;
+    }
+    // else: not yet confirmed live and not currently matching either — just
+    // haven't polled since dispatch yet, so don't touch it.
+  }, [activeBooking?.id, pendingBooking?.id, estimateReview?.id, dispatched]);
 
   function handleBookMechanic(mechanicId: string, mechanicName: string) {
     setPreSelectedMechanic({ id: mechanicId, name: mechanicName });

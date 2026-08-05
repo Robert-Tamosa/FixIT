@@ -18,10 +18,10 @@ export interface OwnerTrackingProps {
 // ── Status config ─────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; desc: string }> = {
-  CONFIRMED:   { label: "Confirmed",   color: "#38BDF8", desc: "Mechanic accepted your booking" },
-  EN_ROUTE:    { label: "En Route",    color: "#F59E0B", desc: "Mechanic is heading to your location" },
-  IN_PROGRESS: { label: "In Progress", color: "#F97316", desc: "Service is underway" },
-  DONE:        { label: "Completed",   color: "#34D399", desc: "Service completed" },
+  ESTIMATE_ACCEPTED: { label: "Confirmed",   color: "#38BDF8", desc: "Mechanic accepted your booking" },
+  EN_ROUTE:            { label: "En Route",    color: "#F59E0B", desc: "Mechanic is heading to your location" },
+  IN_PROGRESS:         { label: "In Progress", color: "#F97316", desc: "Service is underway" },
+  DONE:                 { label: "Completed",   color: "#34D399", desc: "Service completed" },
 };
 
 // ── ETA estimator (rough — distance / avg speed) ──────────────────────────────
@@ -256,8 +256,12 @@ export default function OwnerTrackingView({
 
   // Derive current status — prefer live polled data over the stale prop
   const currentStatus = tracking?.status ?? initialStatus;
-  const isActive = ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"].includes(currentStatus);
-  const statusCfg = STATUS_CONFIG[currentStatus] ?? STATUS_CONFIG.CONFIRMED;
+  // ESTIMATE_ACCEPTED, not CONFIRMED, is the real "tracking-relevant" state
+  // now that the estimate step exists — CONFIRMED just means "mechanic
+  // accepted the request, hasn't sent a price yet," travel hasn't started
+  // and won't until the owner accepts an estimate.
+  const isActive = ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"].includes(currentStatus);
+  const statusCfg = STATUS_CONFIG[currentStatus] ?? STATUS_CONFIG.ESTIMATE_ACCEPTED;
   const mechLat     = tracking?.mechanic?.lat ?? null;
   const mechLng     = tracking?.mechanic?.lng ?? null;
   const distMeters  = geofence?.distanceMeters ?? null;

@@ -181,6 +181,7 @@ export default async function MechanicDashboardPage() {
         vehicleLabel:  `${rawActive.vehicle.brand} ${rawActive.vehicle.model}`,
         problem:       rawActive.problemDescription,
         status:        rawActive.status as ActiveJob["status"],
+        isEmergency:   rawActive.isEmergency ?? false,
         scheduledAt:   formatDate(rawActive.scheduledAt),
         price:         formatPrice(rawActive.price),
       }

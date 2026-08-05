@@ -5,6 +5,7 @@ import ProfileHeader from "@/components/profile/profile-header";
 import VehicleSummaryCard from "@/components/profile/vehicle-summary-card";
 import ContactInfoCard from "@/components/profile/contact-info-card";
 import AccountStatusCard from "@/components/profile/account-status-card";
+import HomeLocationCard from "@/components/profile/home-location-card";
 import SignOutButton from "@/components/SignOutButton";
 import { AIDiagnosticChathead } from "../_dashboard"
 
@@ -28,6 +29,8 @@ export default async function OwnerProfilePage() {
           emailVerified={session.user.emailVerified}
           twoFactorEnabled={session.user.twoFactorEnabled}
         />
+
+        <HomeLocationCard />
       </div>
 
       <ContactInfoCard

@@ -115,12 +115,17 @@ model User {
   twoFactorEnabled Boolean           @default(false)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  homeAddress      String?
+  homeLat          Float?
+  homeLng          Float?
 
   // Relations
   accounts           Account[]
   sessions           Session[]
   twoFactor          TwoFactor?
+  notifications      Notification[]
   mechanicProfile    MechanicProfile?
+  messages           Message[]
   vehicles           Vehicle[]         @relation("UserVehicles")
   bookingsAsOwner    Booking[]         @relation("OwnerBookings")
   bookingsAsMechanic Booking[]         @relation("MechanicBookings")
@@ -200,10 +205,12 @@ model Booking {
 
   // Relations
   mechanic           User?          @relation("MechanicBookings", fields: [mechanicId], references: [id])
+  messages           Message[]
   owner              User           @relation("OwnerBookings",    fields: [ownerId],    references: [id])
   vehicle            Vehicle        @relation(fields: [vehicleId], references: [id])
   rating             MechanicRating?                  // NEW — one rating per booking
   shopRating         ShopRating?    @relation("ShopRatingBooking")
+  shop               RepairShop?    @relation(fields: [shopId], references: [id])
   estimate           CostEstimate?
   invoice            Invoice?
 }
@@ -260,6 +267,7 @@ model RepairShop {
   owner              User                @relation("ShopOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   mechanics          MechanicProfile[]
   ratings            ShopRating[]
+  bookings           Booking[]
 }
 
 model ShopRating {
@@ -318,4 +326,31 @@ model InvoiceItem {
   amount      Decimal  @db.Decimal(10, 2)
 
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id        String    @id @default(cuid())
+  bookingId String
+  booking   Booking   @relation(fields: [bookingId], references: [id])
+  senderId  String
+  sender    User      @relation(fields: [senderId], references: [id])
+  content   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([bookingId, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  type      String    // "BOOKING_ACCEPTED" | "ESTIMATE_SENT" | "ESTIMATE_ACCEPTED" | "ESTIMATE_DECLINED" | "EN_ROUTE" | "IN_PROGRESS" | "DONE" | "NEW_MESSAGE"
+  title     String
+  body      String?
+  link      String?   // where tapping it navigates, e.g. "/dashboard/owner"
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }

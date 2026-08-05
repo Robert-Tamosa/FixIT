@@ -3,27 +3,34 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { updateMechanicLocation } from "@/app/actions/tracking-actions";
+import { advanceBookingStatus } from "@/app/actions/booking-actions";
 
 export interface MechanicTrackingProps {
   bookingId:    string;
   ownerName:    string;
   vehicleLabel: string;
   status:       string;
+  isEmergency:  boolean;
   ownerLat:     number | null;
   ownerLng:     number | null;
   ownerAddress: string | null;
 }
 
-const PUSH_INTERVAL   = 5_000;  // push every 5s
-const GEOFENCE_RADIUS = 200;    // metres
+const PUSH_INTERVAL          = 5_000;  // push every 5s
+const GEOFENCE_DISPLAY_RADIUS = 200;   // metres — for the "Inside/Outside" stat card only
+const AUTO_ARRIVE_RADIUS      = 30;    // metres — stricter, gates the automatic EN_ROUTE -> IN_PROGRESS
+                                        // for emergency bookings. Tighter than the display radius on
+                                        // purpose — this triggers a real status change + owner
+                                        // notification, not just a UI hint, so it shouldn't fire from
+                                        // "somewhere in the neighborhood."
 
 // ── Status config — mirrors owner tracking's, from the mechanic's perspective ──
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; desc: string }> = {
-  CONFIRMED:   { label: "Confirmed",   color: "#38BDF8", desc: "Ready to head to the customer" },
-  EN_ROUTE:    { label: "En Route",    color: "#F59E0B", desc: "You're heading to the customer" },
-  IN_PROGRESS: { label: "In Progress", color: "#F97316", desc: "Service is underway" },
-  DONE:        { label: "Completed",   color: "#34D399", desc: "Service completed" },
+  ESTIMATE_ACCEPTED: { label: "Confirmed",   color: "#38BDF8", desc: "Ready to head to the customer" },
+  EN_ROUTE:           { label: "En Route",    color: "#F59E0B", desc: "You're heading to the customer" },
+  IN_PROGRESS:        { label: "In Progress", color: "#F97316", desc: "Service is underway" },
+  DONE:                { label: "Completed",   color: "#34D399", desc: "Service completed" },
 };
 
 function haversineMeters(
@@ -181,22 +188,38 @@ function TrackingMap({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function MechanicTrackingView({
-  bookingId, ownerName, vehicleLabel, status,
+  bookingId, ownerName, vehicleLabel, status: initialStatus, isEmergency,
   ownerLat, ownerLng, ownerAddress,
 }: MechanicTrackingProps) {
   const [myLat,      setMyLat]      = useState<number | null>(null);
   const [myLng,      setMyLng]      = useState<number | null>(null);
   const [sharing,    setSharing]    = useState(false);
+  const [acquiring,  setAcquiring]  = useState(false);
   const [error,      setError]      = useState<string | null>(null);
   const [lastPush,   setLastPush]   = useState<Date | null>(null);
   const [inside,     setInside]     = useState<boolean | null>(null);
+  // Status starts from the server-loaded prop but can change client-side —
+  // specifically, the emergency auto-advance below needs the UI (progress
+  // banner, "Live"/"Ended" indicator, etc.) to reflect IN_PROGRESS the
+  // moment it happens, not just after a manual refresh.
+  const [currentStatus, setCurrentStatus] = useState(initialStatus);
+  const [autoStartedNotice, setAutoStartedNotice] = useState(false);
   const watchId      = useRef<number | null>(null);
   const pushInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Guards against firing advanceBookingStatus more than once — pushLocation
+  // runs every PUSH_INTERVAL, and once inside the geofence it would stay
+  // inside on every subsequent push too.
+  const autoAdvancedRef = useRef(false);
 
   const router = useRouter();
 
-  const isActive = ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"].includes(status);
-  const statusCfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.CONFIRMED;
+  // ESTIMATE_ACCEPTED, not CONFIRMED, is the real "ready to travel" state
+  // now that the estimate step exists — CONFIRMED just means "accepted the
+  // request, hasn't sent a price yet," which was previously (incorrectly)
+  // treated as trackable, showing this page's live banner before travel
+  // was even possible to start.
+  const isActive = ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"].includes(currentStatus);
+  const statusCfg = STATUS_CONFIG[currentStatus] ?? STATUS_CONFIG.ESTIMATE_ACCEPTED;
 
   const pushLocation = useCallback(async (lat: number, lng: number) => {
     try {
@@ -205,12 +228,42 @@ export default function MechanicTrackingView({
 
       if (ownerLat && ownerLng) {
         const dist = haversineMeters(lat, lng, ownerLat, ownerLng);
-        setInside(dist <= GEOFENCE_RADIUS);
+        setInside(dist <= GEOFENCE_DISPLAY_RADIUS); // the "Inside/Outside" badge, unrelated to the trigger below
+        const isWithinAutoArriveRadius = dist <= AUTO_ARRIVE_RADIUS;
+
+        // Emergency-only auto-advance: EN_ROUTE → IN_PROGRESS the moment
+        // the mechanic's live position enters the (stricter) auto-arrival
+        // radius, instead of waiting for a manual "Arrived — Start Job"
+        // tap. Scoped to emergency bookings specifically — a scheduled job
+        // still expects the mechanic to confirm arrival themselves, since
+        // "close to the pin" isn't the same guarantee as "actually with the
+        // customer" for a routine appointment, but for an emergency, speed
+        // matters more than that extra confirmation step.
+        if (
+          isEmergency &&
+          isWithinAutoArriveRadius &&
+          currentStatus === "EN_ROUTE" &&
+          !autoAdvancedRef.current
+        ) {
+          autoAdvancedRef.current = true;
+          try {
+            await advanceBookingStatus(bookingId);
+            setCurrentStatus("IN_PROGRESS");
+            setAutoStartedNotice(true);
+          } catch (err) {
+            // If this fails (e.g. someone already advanced it manually from
+            // the dashboard in the meantime), don't get stuck retrying —
+            // reset the guard only if the booking is confirmed to still be
+            // EN_ROUTE; otherwise leave it be.
+            console.error("Auto-advance to IN_PROGRESS failed:", err);
+            autoAdvancedRef.current = false;
+          }
+        }
       }
     } catch {
       // Silent — don't interrupt the mechanic
     }
-  }, [ownerLat, ownerLng]);
+  }, [ownerLat, ownerLng, isEmergency, currentStatus, bookingId]);
 
   function startSharing() {
     if (!navigator.geolocation) {
@@ -220,17 +273,42 @@ export default function MechanicTrackingView({
 
     setError(null);
     setSharing(true);
+    setAcquiring(true); // visible "acquiring" state until the first fix lands
 
     watchId.current = navigator.geolocation.watchPosition(
       (pos) => {
         setMyLat(pos.coords.latitude);
         setMyLng(pos.coords.longitude);
+        // A successful fix clears any earlier transient timeout warning
+        // and ends the "acquiring" state.
+        setError(null);
+        setAcquiring(false);
       },
       (err) => {
-        setError(`Location error: ${err.message}`);
-        setSharing(false);
+        // PERMISSION_DENIED is the only truly fatal case — the watch will
+        // never succeed without the user re-granting access, so sharing
+        // actually needs to stop. TIMEOUT and POSITION_UNAVAILABLE are
+        // usually transient (weak signal, no GPS chip on this device, cold
+        // start) — watchPosition keeps retrying in the background on its
+        // own, so killing `sharing`/`acquiring` here would show "stopped"
+        // even though it's still trying and may well succeed on the next
+        // attempt. The "Acquiring location…" UI just keeps showing through
+        // these instead of flashing an alarming error for a normal cold start.
+        if (err.code === err.PERMISSION_DENIED) {
+          setError("Location access was denied. Please enable location permissions for this site.");
+          setSharing(false);
+          setAcquiring(false);
+        } else if (err.code === err.TIMEOUT) {
+          setError("Still trying to get a precise location — this can take a moment.");
+        } else {
+          setError("Location temporarily unavailable — retrying…");
+        }
       },
-      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+      // maximumAge kept low (not widened) — this is live tracking/geofence
+      // data, so a stale cached position has a real accuracy cost, not just
+      // a convenience tradeoff. The "acquiring" UI is what makes the longer
+      // timeout feel okay, rather than accepting older positions to mask it.
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
     );
 
     pushInterval.current = setInterval(() => {
@@ -251,12 +329,16 @@ export default function MechanicTrackingView({
       pushInterval.current = null;
     }
     setSharing(false);
+    setAcquiring(false);
   }
 
-  // Auto-start when EN_ROUTE
+  // Auto-start whenever we're in a state that should be sharing but isn't
+  // yet — not just the exact moment status flips to EN_ROUTE. Covers a
+  // refresh/remount mid-job (IN_PROGRESS) where local `sharing` state
+  // resets to false but the booking is still genuinely active.
   useEffect(() => {
-    if (status === "EN_ROUTE" && !sharing) startSharing();
-  }, [status]);
+    if ((currentStatus === "EN_ROUTE" || currentStatus === "IN_PROGRESS") && !sharing) startSharing();
+  }, [currentStatus]);
 
   // Auto-stop once the job is no longer active — no manual control exists,
   // so this is the only thing that ends sharing besides unmounting.
@@ -326,6 +408,24 @@ export default function MechanicTrackingView({
           </div>
         </div>
 
+        {/* Auto-advance confirmation — only ever shows for emergency jobs,
+            the moment the geofence check flips EN_ROUTE -> IN_PROGRESS
+            automatically instead of requiring a manual tap. */}
+        {autoStartedNotice && (
+          <button
+            onClick={() => setAutoStartedNotice(false)}
+            className="w-full flex items-center gap-2.5 mb-4 px-4 py-3 rounded-2xl
+              bg-orange-500/10 border border-orange-500/25 text-left">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="shrink-0" aria-hidden="true">
+              <path d="M20 6L9 17l-5-5" stroke="#FB923C" strokeWidth="2.2"
+                strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-xs text-orange-300 flex-1">
+              You've arrived — job automatically marked In Progress.
+            </span>
+          </button>
+        )}
+
         {/* Sharing status — automatic, no manual control needed */}
         {isActive && (
           <p className="text-center text-sm font-medium text-zinc-400 mb-4">
@@ -350,7 +450,7 @@ export default function MechanicTrackingView({
               {
                 label: "Geofence", value: inside === null ? "—" : inside ? "Inside ✓" : "Outside",
                 icon: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
-                sub: `${GEOFENCE_RADIUS}m radius`,
+                sub: `${GEOFENCE_DISPLAY_RADIUS}m radius`,
               },
             ].map(({ label, value, icon, sub }) => (
               <div key={label}
@@ -375,7 +475,7 @@ export default function MechanicTrackingView({
             mechanicLng={myLng}
             ownerLat={ownerLat}
             ownerLng={ownerLng}
-            geofenceRadius={GEOFENCE_RADIUS}
+            geofenceRadius={GEOFENCE_DISPLAY_RADIUS}
           />
         ) : (
           <div className="flex flex-col items-center justify-center py-16 gap-3

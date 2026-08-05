@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { toPlainNumber } from "@/lib/invoice-format";
+import { createNotification } from "@/app/actions/notifications";
 
 async function requireUser() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -32,7 +33,10 @@ export async function createEstimate(input: EstimateInput) {
   const user = await requireUser();
   if (user.role !== "MECHANIC") throw new Error("Only mechanics can create estimates");
 
-  const booking = await prisma.booking.findUnique({ where: { id: input.bookingId } });
+  const booking = await prisma.booking.findUnique({
+    where: { id: input.bookingId },
+    include: { vehicle: { select: { brand: true, model: true } } },
+  });
   if (!booking || booking.mechanicId !== user.id) throw new Error("Booking not found");
   if (booking.status !== "CONFIRMED") {
     throw new Error("Booking must be confirmed before sending an estimate");
@@ -55,6 +59,14 @@ export async function createEstimate(input: EstimateInput) {
       data: { status: "ESTIMATE_SENT" },
     }),
   ]);
+
+  await createNotification({
+    userId: booking.ownerId,
+    type: "ESTIMATE_SENT",
+    title: "Repair estimate ready",
+    body: `₱${totalCost.toLocaleString("en-PH")} for your ${booking.vehicle.brand} ${booking.vehicle.model} — review and accept to confirm.`,
+    link: "/dashboard/owner",
+  });
 
   revalidatePath("/dashboard/mechanic");
   revalidatePath("/dashboard/owner");
@@ -87,8 +99,6 @@ export async function editEstimate(input: EstimateInput) {
       partsCost: input.partsCost,
       totalCost,
       notes: input.notes,
-      // If the estimate was already accepted, editing resets acceptance —
-      // owner must confirm the revised price.
       isAccepted: false,
       acceptedAt: null,
     },
@@ -115,7 +125,10 @@ export async function acceptEstimate(bookingId: string) {
   const user = await requireUser();
   if (user.role !== "OWNER") throw new Error("Only the owner can accept an estimate");
 
-  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { vehicle: { select: { brand: true, model: true } } },
+  });
   if (!booking || booking.ownerId !== user.id) throw new Error("Booking not found");
   if (booking.status !== "ESTIMATE_SENT") throw new Error("No pending estimate to accept");
 
@@ -129,6 +142,16 @@ export async function acceptEstimate(bookingId: string) {
       data: { status: "ESTIMATE_ACCEPTED" },
     }),
   ]);
+
+  if (booking.mechanicId) {
+    await createNotification({
+      userId: booking.mechanicId,
+      type: "ESTIMATE_ACCEPTED",
+      title: "Estimate accepted",
+      body: `The owner accepted your estimate for the ${booking.vehicle.brand} ${booking.vehicle.model}. You're clear to head out.`,
+      link: "/dashboard/mechanic",
+    });
+  }
 
   revalidatePath("/dashboard/owner");
   revalidatePath("/dashboard/mechanic");
@@ -144,7 +167,10 @@ export async function declineEstimate(bookingId: string) {
   const user = await requireUser();
   if (user.role !== "OWNER") throw new Error("Only the owner can decline an estimate");
 
-  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { vehicle: { select: { brand: true, model: true } } },
+  });
   if (!booking || booking.ownerId !== user.id) throw new Error("Booking not found");
   if (booking.status !== "ESTIMATE_SENT") throw new Error("No pending estimate to decline");
 
@@ -152,6 +178,16 @@ export async function declineEstimate(bookingId: string) {
     where: { id: bookingId },
     data: { status: "CANCELLED" },
   });
+
+  if (booking.mechanicId) {
+    await createNotification({
+      userId: booking.mechanicId,
+      type: "ESTIMATE_DECLINED",
+      title: "Estimate declined",
+      body: `The owner declined your estimate for the ${booking.vehicle.brand} ${booking.vehicle.model}. Booking cancelled.`,
+      link: "/dashboard/mechanic",
+    });
+  }
 
   revalidatePath("/dashboard/owner");
   revalidatePath("/dashboard/mechanic");

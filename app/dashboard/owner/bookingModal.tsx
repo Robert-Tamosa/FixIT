@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createBooking } from "@/app/actions/booking";
 import { getVehicles, type FetchedVehicle } from "@/app/actions/get-vehicles";
+import { getAvailableSlots, getMechanicLocationForBooking, type TimeSlot } from "@/app/actions/scheduling";
+import { getHomeLocation, saveHomeLocation } from "@/app/actions/home-location";
 import type { DisplayMechanic } from "./_dashboard";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -14,36 +16,26 @@ interface BookingModalProps {
   preSelectedMechanicId?: string | null;
 }
 
-// ── Step labels (matches the Book a Service flow diagram) ──────────────────────
-// 1 Select Vehicle → 2 Describe Problem → 3 Date & Time → 4 Share Location →
-// 5 Browse & Select Mechanic (or Any Available) → 6 Review & Confirm (submits
-// as a PENDING booking request — everything after this point, e.g. estimate
-// review/accept-decline/tracking/invoice, happens in separate screens once
-// the mechanic/shop responds).
+// ── Step labels ──────────────────────────────────────────────────────────────
+// 1 Select Vehicle → 2 Describe Problem → 3 Choose Mechanic/Shop → 4 Date & Time
+// (hard-blocked against that mechanic's existing schedule) → 5 Share Location
+// (home / mechanic-shop's location / current) → 6 Review & Confirm.
+//
+// Mechanic/shop selection was deliberately moved BEFORE date & time so slot
+// conflict-checking has something to check against, and before location so
+// "use the mechanic/shop's location" has an actual address to offer.
 
 const STEP_TITLES = [
   "Select your vehicle",
   "Describe the problem",
-  "Preferred date & time",
+  "Choose a mechanic or shop",
+  "Pick a date & time",
   "Share your location",
-  "Choose a mechanic",
   "Review & confirm",
 ];
 const TOTAL_STEPS = STEP_TITLES.length;
 
-// ── Location capture ─────────────────────────────────────────────────────────
-
-interface CapturedLocation {
-  lat: number;
-  lng: number;
-  address: string;
-}
-
-// ── Browsable targets (step 5) ──────────────────────────────────────────────
-// Mechanics come in as props (already fetched for the dashboard). Shops are
-// fetched fresh from /api/shops/search, mirroring the same result shape as
-// /api/mechanics/search (see route.ts comments) so they can render as the
-// same card type with a `kind` discriminator.
+// ── Shop search result shape (from /api/shops/search) ──────────────────────
 
 interface ShopSearchResult {
   id: string;
@@ -55,6 +47,15 @@ interface ShopSearchResult {
   reviews: number;
   available: boolean;
   availableMechanicCount: number;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+interface CapturedLocation {
+  lat: number;
+  lng: number;
+  address: string;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -70,43 +71,50 @@ export function BookingModal({
   const [step, setStep] = useState(1);
   const [vehicleId, setVehicleId] = useState("");
   const [problem, setProblem] = useState("");
-  const [scheduledAt, setScheduledAt] = useState("");
 
-  // Step 4: location
-  const [location, setLocation] = useState<CapturedLocation | null>(null);
-  const [locating, setLocating] = useState(false);
-  const [locationError, setLocationError] = useState("");
-
-  // Step 5: mechanic — either a specific one, or "any available"
+  // Step 3: mechanic or shop — one or the other, no "Any Available" option
   const [mechanicId, setMechanicId] = useState("");
-  const [anyAvailable, setAnyAvailable] = useState(false);
-
-  // Step 5: shops — fetched fresh when the step opens, mutually exclusive
-  // with picking an individual mechanic or "Any Available"
   const [shopId, setShopId] = useState("");
   const [shops, setShops] = useState<ShopSearchResult[]>([]);
   const [shopsLoading, setShopsLoading] = useState(false);
 
+  // Step 4: date & time (hard-blocking slot picker)
+  const [date, setDate] = useState("");
+  const [slots, setSlots] = useState<TimeSlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState(""); // ISO string of the chosen slot
+
+  // Step 5: location — home / mechanic-shop's location / current
+  const [location, setLocation] = useState<CapturedLocation | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState("");
+  const [homeLocation, setHomeLocation] = useState<CapturedLocation | null>(null);
+  const [homeLoading, setHomeLoading] = useState(false);
+  const [targetLocation, setTargetLocation] = useState<CapturedLocation | null>(null);
+  const [targetLocationLabel, setTargetLocationLabel] = useState("");
+  const [targetLocationLoading, setTargetLocationLoading] = useState(false);
+  const [saveAsHome, setSaveAsHome] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Fetch fresh vehicles every time the modal opens
+  // ── Load vehicles + home location fresh every time the modal opens ─────────
   useEffect(() => {
     if (!isOpen) return;
     setVehiclesLoading(true);
-    getVehicles()
-      .then(setVehicles)
-      .finally(() => setVehiclesLoading(false));
+    getVehicles().then(setVehicles).finally(() => setVehiclesLoading(false));
+
+    setHomeLoading(true);
+    getHomeLocation().then(setHomeLocation).finally(() => setHomeLoading(false));
+
     if (preSelectedMechanicId) {
       setMechanicId(preSelectedMechanicId);
-      setAnyAvailable(false);
     }
   }, [isOpen, preSelectedMechanicId]);
 
-  // Fetch shops once the owner reaches the mechanic/shop step — no point
-  // fetching earlier since they might close the modal before getting there.
+  // ── Fetch shops once step 3 is reached ──────────────────────────────────────
   useEffect(() => {
-    if (!isOpen || step !== 5 || shops.length > 0 || shopsLoading) return;
+    if (!isOpen || step !== 3 || shops.length > 0 || shopsLoading) return;
     setShopsLoading(true);
     fetch("/api/shops/search")
       .then((res) => res.json())
@@ -114,6 +122,50 @@ export function BookingModal({
       .catch(() => setShops([]))
       .finally(() => setShopsLoading(false));
   }, [isOpen, step, shops.length, shopsLoading]);
+
+  // ── Fetch available slots whenever the date changes (step 4) ───────────────
+  useEffect(() => {
+    if (!date) { setSlots([]); return; }
+    setSlotsLoading(true);
+    getAvailableSlots(date, mechanicId || null)
+      .then(setSlots)
+      .catch(() => setSlots([]))
+      .finally(() => setSlotsLoading(false));
+    // Changing the date invalidates whatever slot was previously chosen.
+    setScheduledAt("");
+  }, [date, mechanicId]);
+
+  // ── Fetch the mechanic/shop's location once step 5 is reached ──────────────
+  const loadTargetLocation = useCallback(async () => {
+    setTargetLocationLoading(true);
+    try {
+      if (mechanicId) {
+        const loc = await getMechanicLocationForBooking(mechanicId);
+        if (loc) {
+          setTargetLocation({ lat: loc.lat, lng: loc.lng, address: loc.address });
+          const m = mechanics.find((x) => x.id === mechanicId);
+          setTargetLocationLabel(m ? `${m.name}'s current location` : loc.address);
+        } else {
+          setTargetLocation(null);
+        }
+      } else if (shopId) {
+        const s = shops.find((x) => x.id === shopId);
+        if (s?.latitude && s?.longitude) {
+          setTargetLocation({ lat: s.latitude, lng: s.longitude, address: s.address });
+          setTargetLocationLabel(s.name);
+        } else {
+          setTargetLocation(null);
+        }
+      }
+    } finally {
+      setTargetLocationLoading(false);
+    }
+  }, [mechanicId, shopId, mechanics, shops]);
+
+  useEffect(() => {
+    if (!isOpen || step !== 5) return;
+    loadTargetLocation();
+  }, [isOpen, step, loadTargetLocation]);
 
   if (!isOpen) return null;
 
@@ -123,13 +175,18 @@ export function BookingModal({
     setStep(1);
     setVehicleId("");
     setProblem("");
+    setMechanicId("");
+    setShopId("");
+    setShops([]);
+    setDate("");
+    setSlots([]);
     setScheduledAt("");
     setLocation(null);
     setLocationError("");
-    setMechanicId("");
-    setAnyAvailable(false);
-    setShopId("");
-    setShops([]);
+    setHomeLocation(null);
+    setTargetLocation(null);
+    setTargetLocationLabel("");
+    setSaveAsHome(false);
     setError("");
     setLoading(false);
   }
@@ -139,7 +196,7 @@ export function BookingModal({
     onClose();
   }
 
-  function requestLocation() {
+  function requestCurrentLocation() {
     setLocationError("");
     if (!navigator.geolocation) {
       setLocationError("Your browser doesn't support location sharing.");
@@ -157,8 +214,7 @@ export function BookingModal({
           const geo = await res.json();
           address = geo.display_name ?? address;
         } catch {
-          // Reverse geocoding is best-effort — raw coordinates are still a
-          // valid location if the lookup fails.
+          // Reverse geocoding is best-effort — raw coordinates are still valid.
         }
         setLocation({ lat, lng, address });
         setLocating(false);
@@ -167,7 +223,7 @@ export function BookingModal({
         setLocationError("Location access was denied. You can still continue, but the mechanic won't have your address.");
         setLocating(false);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 20000 }
     );
   }
 
@@ -181,16 +237,16 @@ export function BookingModal({
       setError("Please describe the problem.");
       return;
     }
-    if (step === 3 && !scheduledAt) {
-      setError("Please pick a date & time.");
+    if (step === 3 && !mechanicId && !shopId) {
+      setError("Select a mechanic or a shop.");
       return;
     }
-    if (step === 4 && !location) {
-      setError("Please share your location so a mechanic can find you.");
+    if (step === 4 && !scheduledAt) {
+      setError("Pick an available date & time.");
       return;
     }
-    if (step === 5 && !anyAvailable && !mechanicId && !shopId) {
-      setError('Select a mechanic or shop, or choose "Any Available Mechanic".');
+    if (step === 5 && !location) {
+      setError("Please choose a location.");
       return;
     }
     setStep((s) => s + 1);
@@ -207,14 +263,19 @@ export function BookingModal({
     try {
       await createBooking({
         vehicleId,
-        mechanicId: shopId ? null : (anyAvailable ? null : mechanicId),
+        mechanicId: mechanicId || null,
         shopId: shopId || null,
         problemDescription: problem,
-        scheduledAt: scheduledAt,
+        scheduledAt,
         ownerLat: location!.lat,
         ownerLng: location!.lng,
         address: location!.address,
       });
+
+      if (saveAsHome && location) {
+        await saveHomeLocation(location.lat, location.lng, location.address).catch(() => {});
+      }
+
       reset();
       onClose();
     } catch (e) {
@@ -230,19 +291,18 @@ export function BookingModal({
   const selectedMechanic = mechanics.find((m) => m.id === mechanicId);
   const selectedShop = shops.find((s) => s.id === shopId);
   const availableMechanics = mechanics.filter((m) => m.available);
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
         onClick={handleClose}
         aria-hidden="true"
       />
 
-      {/* Bottom sheet */}
       <div
         role="dialog"
         aria-modal="true"
@@ -262,7 +322,6 @@ export function BookingModal({
         max-w-2xl
         mx-auto
     ">
-        {/* Drag handle */}
         <div className="flex justify-center pt-3 pb-1">
           <div className="w-10 h-1 rounded-full bg-white/[0.12]" />
         </div>
@@ -382,82 +441,10 @@ export function BookingModal({
             </div>
           )}
 
-          {/* ── Step 3: Preferred date & time ── */}
+          {/* ── Step 3: Choose mechanic or shop ── */}
           {step === 3 && (
-            <div className="space-y-3">
-              <label className="text-xs text-zinc-400 mb-1.5 block">
-                When would you like the mechanic to arrive?
-              </label>
-              <input
-                type="datetime-local"
-                value={scheduledAt}
-                onChange={(e) => setScheduledAt(e.target.value)}
-                min={new Date().toISOString().slice(0, 16)}
-                className="w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-white/[0.08]
-                  text-zinc-100 text-sm outline-none
-                  focus:border-amber-400/50 focus:bg-white/[0.06]
-                  transition-all [color-scheme:dark]"
-              />
-              <p className="text-[11px] text-zinc-600">
-                Need help right now instead? Close this and use Emergency Booking from the dashboard.
-              </p>
-            </div>
-          )}
-
-          {/* ── Step 4: Share preferred service location ── */}
-          {step === 4 && (
-            <div className="space-y-3">
-              {!location ? (
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5 text-center space-y-3">
-                  <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke="#F59E0B" strokeWidth="1.5" />
-                      <circle cx="12" cy="10" r="3" stroke="#F59E0B" strokeWidth="1.5" />
-                    </svg>
-                  </div>
-                  <p className="text-sm text-zinc-300">
-                    Share your current location so the mechanic knows where to go.
-                  </p>
-                  <button
-                    onClick={requestLocation}
-                    disabled={locating}
-                    className="w-full py-3 rounded-xl bg-amber-400 hover:bg-amber-300 active:scale-[0.98]
-                      text-[#080909] font-semibold text-sm transition-all disabled:opacity-50">
-                    {locating ? "Getting your location…" : "Share current location"}
-                  </button>
-                  {locationError && (
-                    <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2">{locationError}</p>
-                  )}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.05] p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M20 6L9 17l-5-5" stroke="#34D399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    <p className="text-sm font-medium text-emerald-400">Location shared</p>
-                  </div>
-                  <p className="text-xs text-zinc-400 leading-relaxed">{location.address}</p>
-                  <button
-                    onClick={requestLocation}
-                    disabled={locating}
-                    className="text-xs text-amber-400 font-medium">
-                    {locating ? "Updating…" : "Use current location again"}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Step 5: Browse & select mechanic (or any available) ── */}
-          {step === 5 && (
             <div className="space-y-2">
-              {/* Any Available Mechanic — mechanicId stays null; the shop/
-                  dispatch side (assignMechanicToBooking) picks it up later.
-                  Full shop browsing alongside this is a follow-up — needs a
-                  server action to list/search RepairShop records, which
-                  doesn't exist in the files I've seen yet. */}
-              <p className="text-[11px] text-zinc-600 uppercase tracking-wider font-medium pt-2 pb-1">
+              <p className="text-[11px] text-zinc-600 uppercase tracking-wider font-medium pb-1">
                 Choose a mechanic
               </p>
 
@@ -500,13 +487,13 @@ export function BookingModal({
                 ))}
                 {availableMechanics.length === 0 && (
                   <p className="text-sm text-zinc-500 text-center py-4">
-                    No individual mechanics available right now — try booking a shop below instead.
+                    No individual mechanics available right now — try a shop below.
                   </p>
                 )}
               </div>
 
               <p className="text-[11px] text-zinc-600 uppercase tracking-wider font-medium pt-4 pb-1">
-                Or book a shop directly
+                Or choose a shop
               </p>
 
               <div className="space-y-2">
@@ -523,7 +510,7 @@ export function BookingModal({
                   shops.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => { setShopId(s.id); setAnyAvailable(false); setMechanicId(""); }}
+                      onClick={() => { setShopId(s.id); setMechanicId(""); }}
                       className={[
                         "w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all text-left",
                         shopId === s.id
@@ -563,6 +550,177 @@ export function BookingModal({
             </div>
           )}
 
+          {/* ── Step 4: Date & time — hard-blocking slot picker ── */}
+          {step === 4 && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-zinc-400 mb-1.5 block">Date</label>
+                <input
+                  type="date"
+                  value={date}
+                  min={todayStr}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl bg-white/[0.04] border border-white/[0.08]
+                    text-zinc-100 text-sm outline-none
+                    focus:border-amber-400/50 focus:bg-white/[0.06]
+                    transition-all [color-scheme:dark]"
+                />
+              </div>
+
+              {shopId && (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.07]">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" stroke="#71717A" strokeWidth="1.5" />
+                    <path d="M12 8v4M12 16h.01" stroke="#71717A" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                  <p className="text-xs text-zinc-500">
+                    Shop time slots aren't checked against individual mechanic schedules yet — all times shown as open.
+                  </p>
+                </div>
+              )}
+
+              {date && (
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1.5 block">Available times</label>
+                  {slotsLoading ? (
+                    <div className="flex items-center justify-center py-8 gap-2.5">
+                      <span className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-amber-400 animate-spin" />
+                      <p className="text-sm text-zinc-500">Checking availability…</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {slots.map((slot) => (
+                        <button
+                          key={slot.iso}
+                          disabled={!slot.available}
+                          onClick={() => setScheduledAt(slot.iso)}
+                          className={[
+                            "py-2.5 rounded-xl text-xs font-medium border transition-all",
+                            !slot.available
+                              ? "bg-white/[0.01] border-white/[0.04] text-zinc-700 cursor-not-allowed line-through"
+                              : scheduledAt === slot.iso
+                                ? "bg-amber-400 border-amber-400 text-zinc-900 font-bold"
+                                : "bg-white/[0.03] border-white/[0.08] text-zinc-300 hover:bg-white/[0.06]",
+                          ].join(" ")}>
+                          {slot.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!slotsLoading && mechanicId && (
+                    <p className="text-[11px] text-zinc-600 mt-2">
+                      Greyed-out times are already booked with this mechanic (±1hr buffer).
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Step 5: Location — home / mechanic-shop's location / current ── */}
+          {step === 5 && (
+            <div className="space-y-2.5">
+              {/* Home */}
+              {homeLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <span className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-amber-400 animate-spin" />
+                </div>
+              ) : homeLocation ? (
+                <button
+                  onClick={() => setLocation(homeLocation)}
+                  className={[
+                    "w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-all text-left",
+                    location?.address === homeLocation.address
+                      ? "bg-amber-400/10 border-amber-400/40"
+                      : "bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.06]",
+                  ].join(" ")}>
+                  <div className="w-10 h-10 rounded-xl bg-white/[0.05] border border-white/[0.08]
+                    flex items-center justify-center shrink-0">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h3v-6h6v6h3a1 1 0 0 0 1-1V10"
+                        stroke="#52525B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-zinc-300">Home address</p>
+                    <p className="text-xs text-zinc-500 truncate">{homeLocation.address}</p>
+                  </div>
+                </button>
+              ) : null}
+
+              {/* Mechanic / shop's location */}
+              {targetLocationLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <span className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-amber-400 animate-spin" />
+                </div>
+              ) : targetLocation ? (
+                <button
+                  onClick={() => setLocation(targetLocation)}
+                  className={[
+                    "w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl border transition-all text-left",
+                    location?.address === targetLocation.address
+                      ? "bg-amber-400/10 border-amber-400/40"
+                      : "bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.06]",
+                  ].join(" ")}>
+                  <div className="w-10 h-10 rounded-xl bg-white/[0.05] border border-white/[0.08]
+                    flex items-center justify-center shrink-0">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" stroke="#52525B" strokeWidth="1.5"
+                        strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-zinc-300">{targetLocationLabel}</p>
+                    <p className="text-xs text-zinc-500 truncate">Bring your vehicle here</p>
+                  </div>
+                </button>
+              ) : null}
+
+              {/* Current location */}
+              {!location || (location.address !== homeLocation?.address && location.address !== targetLocation?.address) ? (
+                location ? (
+                  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.05] p-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M20 6L9 17l-5-5" stroke="#34D399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <p className="text-sm font-medium text-emerald-400">Current location shared</p>
+                    </div>
+                    <p className="text-xs text-zinc-400 leading-relaxed">{location.address}</p>
+                    <label className="flex items-center gap-2 pt-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={saveAsHome}
+                        onChange={(e) => setSaveAsHome(e.target.checked)}
+                        className="accent-amber-400"
+                      />
+                      <span className="text-xs text-zinc-400">Save this as my home address</span>
+                    </label>
+                    <button onClick={requestCurrentLocation} disabled={locating} className="text-xs text-amber-400 font-medium">
+                      {locating ? "Updating…" : "Use current location again"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 text-center space-y-3">
+                    <p className="text-sm text-zinc-300">
+                      {homeLocation || targetLocation ? "Or use somewhere else" : "Share your current location"}
+                    </p>
+                    <button
+                      onClick={requestCurrentLocation}
+                      disabled={locating}
+                      className="w-full py-3 rounded-xl bg-amber-400 hover:bg-amber-300 active:scale-[0.98]
+                        text-[#080909] font-semibold text-sm transition-all disabled:opacity-50">
+                      {locating ? "Getting your location…" : "Share current location"}
+                    </button>
+                    {locationError && (
+                      <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2">{locationError}</p>
+                    )}
+                  </div>
+                )
+              ) : null}
+            </div>
+          )}
+
           {/* ── Step 6: Review & confirm ── */}
           {step === 6 && (
             <div className="space-y-4">
@@ -577,22 +735,18 @@ export function BookingModal({
                   },
                   { label: "Problem", value: problem },
                   {
+                    label: "Mechanic",
+                    value: shopId ? (selectedShop?.name ?? "Shop") : (selectedMechanic?.name ?? "—"),
+                  },
+                  {
                     label: "Schedule",
                     value: scheduledAt
-                        ? new Date(scheduledAt).toLocaleString("en-PH", {
-                            month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-                          })
-                        : "—",
+                      ? new Date(scheduledAt).toLocaleString("en-PH", {
+                          month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+                        })
+                      : "—",
                   },
                   { label: "Location", value: location?.address ?? "—" },
-                  {
-                    label: "Mechanic",
-                    value: shopId
-                      ? `${selectedShop?.name ?? "Shop"} (shop will assign a mechanic)`
-                      : anyAvailable
-                        ? "Any Available Mechanic"
-                        : (selectedMechanic?.name ?? "—"),
-                  },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex items-start gap-3">
                     <span className="text-xs text-zinc-500 w-16 shrink-0 pt-0.5">{label}</span>

@@ -5,6 +5,8 @@ import {
   getShopBookings,
   getAssignableMechanics,
   assignMechanicToBooking,
+  acceptShopBooking,
+  declineShopBooking,
   findIndependentMechanicByEmail,
   inviteMechanicToShop,
   removeMechanicFromShop,
@@ -264,6 +266,8 @@ function BookingsTab({ mechanics }: { mechanics: ShopMechanicRow[] }) {
   const [bookings, setBookings] = useState<DisplayShopBooking[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [actioningId, setActioningId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
 
   async function load(nextFilter: typeof filter) {
     setLoading(true);
@@ -294,6 +298,32 @@ function BookingsTab({ mechanics }: { mechanics: ShopMechanicRow[] }) {
   async function handleAssigned() {
     setAssigningId(null);
     await load(filter);
+  }
+
+  async function handleAccept(bookingId: string) {
+    setActionError(null);
+    setActioningId(bookingId);
+    try {
+      await acceptShopBooking(bookingId);
+      await load(filter);
+    } catch (e) {
+      setActionError({ id: bookingId, message: e instanceof Error ? e.message : "Could not accept this booking" });
+    } finally {
+      setActioningId(null);
+    }
+  }
+
+  async function handleDecline(bookingId: string) {
+    setActionError(null);
+    setActioningId(bookingId);
+    try {
+      await declineShopBooking(bookingId);
+      await load(filter);
+    } catch (e) {
+      setActionError({ id: bookingId, message: e instanceof Error ? e.message : "Could not decline this booking" });
+    } finally {
+      setActioningId(null);
+    }
   }
 
   return (
@@ -346,7 +376,25 @@ function BookingsTab({ mechanics }: { mechanics: ShopMechanicRow[] }) {
                 <p className="text-xs text-zinc-500">
                   {b.mechanicName ? `Assigned: ${b.mechanicName}` : "Any Available Mechanic — unassigned"}
                 </p>
-                {b.status !== "DONE" && b.status !== "CANCELLED" && (
+                {b.status === "PENDING" ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleDecline(b.id)}
+                      disabled={actioningId === b.id}
+                      className="text-xs text-red-400 font-medium disabled:opacity-50"
+                    >
+                      Decline
+                    </button>
+                    <button
+                      onClick={() => handleAccept(b.id)}
+                      disabled={actioningId === b.id}
+                      className="text-xs text-zinc-900 bg-amber-400 px-3 py-1.5 rounded-lg font-medium
+                        active:scale-[0.98] transition-all disabled:opacity-50"
+                    >
+                      {actioningId === b.id ? "Accepting…" : "Accept"}
+                    </button>
+                  </div>
+                ) : b.status !== "DONE" && b.status !== "CANCELLED" ? (
                   assigningId === b.id ? (
                     <MechanicPicker
                       mechanics={mechanics}
@@ -364,8 +412,13 @@ function BookingsTab({ mechanics }: { mechanics: ShopMechanicRow[] }) {
                       {b.mechanicName ? "Reassign" : "Assign mechanic"}
                     </button>
                   )
-                )}
+                ) : null}
               </div>
+              {actionError && actionError.id === b.id && (
+                <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2 -mt-1">
+                  {actionError.message}
+                </p>
+              )}
             </div>
           ))}
         </div>

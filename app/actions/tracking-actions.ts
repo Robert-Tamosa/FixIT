@@ -33,7 +33,7 @@ export async function getMechanicLocation(bookingId: string) {
     where: {
       id:      bookingId,
       ownerId: session.user.id,
-      status:  { in: ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"] },
+      status:  { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"] },
     },
     select: {
       status:     true,

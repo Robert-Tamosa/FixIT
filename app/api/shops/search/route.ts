@@ -68,6 +68,7 @@ export async function GET(req: NextRequest) {
           reviews:                s.ratings.length,
           available:              availableMechanicCount > 0,
           availableMechanicCount,
+          address:                s.address,
           latitude:               s.latitude,
           longitude:              s.longitude,
         };
