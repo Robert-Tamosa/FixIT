@@ -17,6 +17,31 @@ async function requireUser() {
   return dbUser;
 }
 
+/**
+ * Resolves whether the current user may act on this booking's invoice —
+ * either the assigned mechanic, or the owner of the booking's shop (shop
+ * bookings never get a mechanicId now — no assignment step exists — so the
+ * shop owner has to be the one generating/marking-paid invoices for their
+ * own bookings). Same pattern as estimate.ts's resolveEstimateAccess.
+ */
+async function resolveBookingAccess(
+  booking: { mechanicId: string | null; shopId: string | null },
+  user: { id: string; role: string },
+): Promise<{ isMechanic: boolean; isShopOwner: boolean }> {
+  const isMechanic = user.role === "MECHANIC" && booking.mechanicId === user.id;
+
+  let isShopOwner = false;
+  if (user.role === "SHOP_OWNER" && booking.shopId) {
+    const shop = await prisma.repairShop.findUnique({
+      where: { id: booking.shopId },
+      select: { ownerId: true },
+    });
+    isShopOwner = shop?.ownerId === user.id;
+  }
+
+  return { isMechanic, isShopOwner };
+}
+
 export interface InvoiceItemInput {
   description: string;
   quantity: number;
@@ -24,9 +49,9 @@ export interface InvoiceItemInput {
 }
 
 /**
- * Mechanic (or admin) generates the final invoice once a booking is DONE.
- * Line items let the mechanic reflect any changes from the original estimate
- * (extra parts, adjusted labor, etc.).
+ * Mechanic, shop owner (for shop bookings), or admin generates the final
+ * invoice once a booking is DONE. Line items let the mechanic/shop reflect
+ * any changes from the original estimate (extra parts, adjusted labor, etc.).
  */
 export async function generateInvoice(
   bookingId: string,
@@ -38,9 +63,9 @@ export async function generateInvoice(
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
   if (!booking) throw new Error("Booking not found");
 
-  const isOwnerMechanic = user.role === "MECHANIC" && booking.mechanicId === user.id;
+  const { isMechanic, isShopOwner } = await resolveBookingAccess(booking, user);
   const isAdmin = user.role === "ADMIN";
-  if (!isOwnerMechanic && !isAdmin) throw new Error("Not authorized to generate this invoice");
+  if (!isMechanic && !isShopOwner && !isAdmin) throw new Error("Not authorized to generate this invoice");
   if (booking.status !== "DONE") throw new Error("Booking must be completed first");
 
   const existing = await prisma.invoice.findUnique({ where: { bookingId } });
@@ -74,14 +99,16 @@ export async function generateInvoice(
   });
 
   revalidatePath(`/dashboard/mechanic/jobs/${bookingId}`);
+  revalidatePath(`/dashboard/shop`);
   revalidatePath(`/dashboard/owner/invoices/${bookingId}`);
   revalidatePath("/dashboard/admin/invoices");
   return { success: true };
 }
 
 /**
- * Mechanic or admin confirms cash payment was received outside the app.
- * There is no in-app payment processing — this just records the outcome.
+ * Mechanic, shop owner, or admin confirms cash payment was received outside
+ * the app. There is no in-app payment processing — this just records the
+ * outcome.
  */
 export async function markInvoicePaid(invoiceId: string) {
   const user = await requireUser();
@@ -92,9 +119,9 @@ export async function markInvoicePaid(invoiceId: string) {
   });
   if (!invoice) throw new Error("Invoice not found");
 
-  const isOwnerMechanic = user.role === "MECHANIC" && invoice.booking.mechanicId === user.id;
+  const { isMechanic, isShopOwner } = await resolveBookingAccess(invoice.booking, user);
   const isAdmin = user.role === "ADMIN";
-  if (!isOwnerMechanic && !isAdmin) throw new Error("Not authorized");
+  if (!isMechanic && !isShopOwner && !isAdmin) throw new Error("Not authorized");
 
   await prisma.invoice.update({
     where: { id: invoiceId },
@@ -102,6 +129,7 @@ export async function markInvoicePaid(invoiceId: string) {
   });
 
   revalidatePath(`/dashboard/mechanic/jobs/${invoice.bookingId}`);
+  revalidatePath(`/dashboard/shop`);
   revalidatePath(`/dashboard/owner/invoices/${invoice.bookingId}`);
   revalidatePath("/dashboard/admin/invoices");
   return { success: true };
@@ -128,7 +156,7 @@ export interface DisplayInvoice {
   items: DisplayInvoiceItem[];
 }
 
-/** Fetches an invoice, scoped to owner/mechanic (own booking) or admin. */
+/** Fetches an invoice, scoped to owner/mechanic/shop owner (own booking) or admin. */
 export async function getInvoice(bookingId: string): Promise<DisplayInvoice | null> {
   const user = await requireUser();
 
@@ -136,9 +164,9 @@ export async function getInvoice(bookingId: string): Promise<DisplayInvoice | nu
   if (!booking) throw new Error("Booking not found");
 
   const isOwner = user.role === "OWNER" && booking.ownerId === user.id;
-  const isMechanic = user.role === "MECHANIC" && booking.mechanicId === user.id;
+  const { isMechanic, isShopOwner } = await resolveBookingAccess(booking, user);
   const isAdmin = user.role === "ADMIN";
-  if (!isOwner && !isMechanic && !isAdmin) throw new Error("Not authorized");
+  if (!isOwner && !isMechanic && !isShopOwner && !isAdmin) throw new Error("Not authorized");
 
   const invoice = await prisma.invoice.findUnique({
     where: { bookingId },
@@ -183,7 +211,7 @@ export async function getAllInvoices(): Promise<DisplayInvoiceListRow[]> {
   if (user.role !== "ADMIN") throw new Error("Admin only");
 
   const invoices = await prisma.invoice.findMany({
-    include: { booking: { include: { owner: true, mechanic: true } } },
+    include: { booking: { include: { owner: true, mechanic: true, shop: { select: { name: true } } } } },
     orderBy: { generatedAt: "desc" },
   });
 
@@ -192,7 +220,9 @@ export async function getAllInvoices(): Promise<DisplayInvoiceListRow[]> {
     invoiceNumber: inv.invoiceNumber,
     bookingId: inv.bookingId,
     ownerName: inv.booking.owner.name ?? "Unknown",
-    mechanicName: inv.booking.mechanic?.name ?? "Unassigned",
+    // For shop bookings mechanic is always null now (no assignment step) —
+    // show the shop's name instead of a misleading "Unassigned".
+    mechanicName: inv.booking.mechanic?.name ?? inv.booking.shop?.name ?? "Unassigned",
     totalAmount: toPlainNumber(inv.totalAmount),
     paymentStatus: inv.paymentStatus,
     generatedAt: inv.generatedAt.toISOString(),

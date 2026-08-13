@@ -27,6 +27,7 @@ export default async function OwnerDashboardPage() {
     },
     include: {
       mechanic: { select: { id: true, name: true } },
+      shop:     { select: { name: true } },
       vehicle:  { select: { brand: true, model: true, plateNumber: true } },
       rating:   { select: { rating: true } },
     },
@@ -41,6 +42,7 @@ export default async function OwnerDashboardPage() {
     },
     include: {
       mechanic: { select: { id: true, name: true } },
+      shop:     { select: { name: true } },
       vehicle:  { select: { brand: true, model: true, plateNumber: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -117,6 +119,12 @@ export default async function OwnerDashboardPage() {
         mechanicName:     rawBooking.mechanic?.name ?? "Unknown Mechanic",
         mechanicInitials: getInitials(rawBooking.mechanic?.name ?? null),
         mechanicRating:   Math.round((ratingMap.get(rawBooking.mechanicId ?? "") ?? 0) * 10) / 10,
+        // Only populated for shop bookings — mechanicId stays null for
+        // those (no assignment step exists anymore), so this is what tells
+        // ActiveBookingCard which progress-bar/name to show. Was never set
+        // before, which is why the EN_ROUTE step kept showing for shop
+        // bookings despite the isShopBooking branch existing in the UI.
+        ShopName:         rawBooking.shop?.name ?? "",
         service:          rawBooking.problemDescription,
         status:           rawBooking.status as DisplayBooking["status"],
         scheduledAt:      rawBooking.scheduledAt
@@ -148,6 +156,7 @@ export default async function OwnerDashboardPage() {
         mechanicName:     pendingBooking.mechanic?.name ?? "Unknown Mechanic",
         mechanicInitials: getInitials(pendingBooking.mechanic?.name ?? null),
         mechanicRating:   Math.round((ratingMap.get(pendingBooking.mechanicId ?? "") ?? 0) * 10) / 10,
+        ShopName:         pendingBooking.shop?.name ?? "",
         service:          pendingBooking.problemDescription,
         status:           pendingBooking.status as DisplayBooking["status"],
         scheduledAt:      pendingBooking.scheduledAt

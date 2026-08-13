@@ -22,8 +22,14 @@ export async function updateMechanicLocation(lat: number, lng: number) {
   });
 }
 
-// ── Get mechanic location for a booking ──────────────────────────────────────
-// Called by the owner's polling interval
+// ── Get mechanic (or shop) location for a booking ────────────────────────────
+// Called by the owner's polling interval. Shop bookings have no assigned
+// mechanic at all now (no assignment step exists anymore) — booking.mechanic
+// is null in that case, so this falls back to the shop's own registered
+// latitude/longitude/name instead. That's a static point, not live GPS
+// movement — the shop's location doesn't move as the job progresses, unlike
+// a real mechanic's watchPosition feed. Same return shape either way, so
+// the owner tracking UI doesn't need to know which case it's in.
 
 export async function getMechanicLocation(bookingId: string) {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -39,6 +45,8 @@ export async function getMechanicLocation(bookingId: string) {
       status:     true,
       ownerLat:   true,
       ownerLng:   true,
+      mechanicId: true,
+      shopId:     true,
       mechanic: {
         select: {
           name: true,
@@ -51,20 +59,44 @@ export async function getMechanicLocation(bookingId: string) {
           },
         },
       },
+      shop: {
+        select: {
+          name:      true,
+          latitude:  true,
+          longitude: true,
+        },
+      },
     },
   });
 
   if (!booking) return null;
 
-  const profile = booking.mechanic?.mechanicProfile;
+  let mechanicName: string;
+  let mechanicLocation: { lat: number | null; lng: number | null; updatedAt: Date | null } | null;
+
+  if (booking.mechanicId && booking.mechanic) {
+    // Independent mechanic — real, live-updating position.
+    const profile = booking.mechanic.mechanicProfile;
+    mechanicName = booking.mechanic.name ?? "Mechanic";
+    mechanicLocation = profile
+      ? { lat: profile.latitude, lng: profile.longitude, updatedAt: profile.locationUpdatedAt }
+      : null;
+  } else if (booking.shopId && booking.shop) {
+    // Shop booking, no mechanic assigned — static point at the shop's own
+    // registered location. updatedAt is null since this never "updates"
+    // the way live GPS does; the owner tracking UI should treat a null
+    // updatedAt here as expected, not as stale/missing data.
+    mechanicName = booking.shop.name;
+    mechanicLocation = { lat: booking.shop.latitude, lng: booking.shop.longitude, updatedAt: null };
+  } else {
+    mechanicName = "Mechanic";
+    mechanicLocation = null;
+  }
+
   return {
     status:       booking.status,
-    mechanicName: booking.mechanic?.name ?? "Mechanic",
-    mechanic: profile ? {
-      lat:       profile.latitude,
-      lng:       profile.longitude,
-      updatedAt: profile.locationUpdatedAt,
-    } : null,
+    mechanicName,
+    mechanic: mechanicLocation,
     owner: {
       lat: booking.ownerLat,
       lng: booking.ownerLng,
@@ -72,6 +104,10 @@ export async function getMechanicLocation(bookingId: string) {
   };
 }
 
+// Derived from getMechanicLocation's actual return type rather than hand-
+// duplicated on the client — if the shape above ever changes, every
+// consumer gets a compile error at the point of use instead of a silent
+// runtime mismatch. Used by _owner-tracking.tsx.
 export type MechanicLocationResult = Awaited<ReturnType<typeof getMechanicLocation>>;
 
 // ── Save owner's pinned location on a booking ─────────────────────────────────
@@ -108,6 +144,8 @@ export async function checkGeofence(
     select: {
       ownerLat:   true,
       ownerLng:   true,
+      mechanicId: true,
+      shopId:     true,
       mechanic: {
         select: {
           mechanicProfile: {
@@ -115,23 +153,29 @@ export async function checkGeofence(
           },
         },
       },
+      shop: {
+        select: { latitude: true, longitude: true },
+      },
     },
   });
 
-  if (
-    !booking?.ownerLat || !booking?.ownerLng ||
-    !booking.mechanic?.mechanicProfile?.latitude ||
-    !booking.mechanic?.mechanicProfile?.longitude
-  ) {
+  if (!booking?.ownerLat || !booking?.ownerLng) {
     return { inside: false, distanceMeters: null };
   }
 
-  const dist = haversineMeters(
-    booking.ownerLat,
-    booking.ownerLng,
-    booking.mechanic.mechanicProfile.latitude,
-    booking.mechanic.mechanicProfile.longitude
-  );
+  // Same mechanic-or-shop fallback as getMechanicLocation above.
+  const targetLat = booking.mechanicId
+    ? booking.mechanic?.mechanicProfile?.latitude
+    : booking.shop?.latitude;
+  const targetLng = booking.mechanicId
+    ? booking.mechanic?.mechanicProfile?.longitude
+    : booking.shop?.longitude;
+
+  if (!targetLat || !targetLng) {
+    return { inside: false, distanceMeters: null };
+  }
+
+  const dist = haversineMeters(booking.ownerLat, booking.ownerLng, targetLat, targetLng);
 
   return { inside: dist <= radiusMeters, distanceMeters: Math.round(dist) };
 }

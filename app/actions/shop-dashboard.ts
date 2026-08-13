@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { toPlainNumber } from "@/lib/invoice-format";
 import { createNotification } from "@/app/actions/notifications";
+import crypto from "crypto";
 
 async function requireShopOwner() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -229,11 +230,10 @@ export async function getAssignableMechanics(): Promise<DisplayAssignableMechani
 }
 
 /**
- * Assigns a mechanic to a booking that came in as "Any Available Mechanic"
- * (booked directly to the shop, mechanicId null). Also covers reassignment —
- * changing an already-assigned mechanic to a different one on the same shop,
- * as long as the job hasn't finished. Requires the booking to already be
- * accepted (not PENDING) — accept/decline is a separate step now.
+ * Assigns a mechanic to a booking. Kept in the backend even though the shop
+ * dashboard UI no longer calls this (see "no assigning to mechanics" — the
+ * shop now handles the whole lifecycle itself). Not deleted in case it's
+ * needed again later; just dormant.
  */
 export async function assignMechanicToBooking(bookingId: string, mechanicId: string) {
   const { shopId } = await requireShopOwner();
@@ -261,7 +261,90 @@ export async function assignMechanicToBooking(bookingId: string, mechanicId: str
   return { success: true };
 }
 
-// ── Mechanic invite ──────────────────────────────────────────────────────────
+// ── Mechanic invite / creation ───────────────────────────────────────────────
+
+/**
+ * Shop creates a real mechanic account directly — not the independent-
+ * mechanic invite flow (findIndependentMechanicByEmail/inviteMechanicToShop
+ * below, which is for already-registered independent mechanics). This is
+ * for shop staff who've never registered on the platform at all.
+ *
+ * Verification is inherited from the shop's own verified status, not
+ * independently admin-reviewed — an unverified shop creating mechanics
+ * gets PENDING mechanics, not an automatic bypass of the trust chain.
+ *
+ * SECURITY NOTE on signUpEmail: this uses `asResponse: true` and never
+ * touches next/headers' cookies() anywhere in this function. Next.js
+ * Server Actions only ever set a cookie on the caller's browser if the
+ * action explicitly calls cookies().set() — since this never does, there
+ * is no way for the newly created mechanic's session to leak into the
+ * shop owner's browser, regardless of what Better Auth internally
+ * attempts. Confirmed separately: auth.ts has no nextCookies() plugin
+ * registered either, so there's no ambient cookie-forwarding happening at
+ * the framework level, but that's a secondary safeguard, not the primary
+ * one — the primary one is architectural (this function just never calls
+ * the one API that could set a cookie).
+ */
+export async function createShopMechanic(input: {
+  name: string;
+  email: string;
+  specialization: string;
+  phone?: string;
+}) {
+  const { shopId } = await requireShopOwner();
+
+  const shop = await prisma.repairShop.findUnique({
+    where: { id: shopId },
+    select: { isVerified: true },
+  });
+
+  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+  if (existing) throw new Error("An account with this email already exists.");
+
+  // Random 12-char temp password — Better Auth's default minimum is 8.
+  // Handed back once to the shop owner to relay to their new mechanic;
+  // there's no forced-change-on-first-login flow yet, so recommend they
+  // ask the mechanic to change it soon after logging in.
+  const tempPassword = crypto.randomBytes(9).toString("base64url");
+
+  const signUpResponse = await auth.api.signUpEmail({
+    body: { name: input.name, email: input.email, password: tempPassword },
+    asResponse: true,
+  });
+
+  if (!signUpResponse.ok) {
+    const err = await signUpResponse.json().catch(() => null);
+    throw new Error(err?.message ?? "Could not create the mechanic's account.");
+  }
+
+  const signUpData = await signUpResponse.json();
+  const newUserId: string | undefined = signUpData?.user?.id;
+  if (!newUserId) {
+    // Flagging this explicitly rather than failing silently — if Better
+    // Auth's response shape ever changes, this is where it'd surface.
+    throw new Error("Account was created but its ID could not be read from the response.");
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: newUserId },
+      data: { role: "MECHANIC", phone: input.phone },
+    }),
+    prisma.mechanicProfile.create({
+      data: {
+        userId: newUserId,
+        shopId,
+        specialization: input.specialization,
+        isVerified: shop?.isVerified ?? false,
+        verificationStatus: shop?.isVerified ? "APPROVED" : "PENDING",
+        isAvailable: false,
+      },
+    }),
+  ]);
+
+  revalidatePath("/dashboard/shop");
+  return { success: true, mechanicId: newUserId, tempPassword };
+}
 
 export interface DisplayInviteCandidate {
   userId: string;

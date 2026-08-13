@@ -58,35 +58,66 @@ export async function submitRating(
   if (!rating || rating < 1 || rating > 5)
     return { status: "error", message: "Please select a rating between 1 and 5." };
 
-  // Verify the booking belongs to this owner and is DONE
+  // Verify the booking belongs to this owner and is DONE. Also pull shopId
+  // and shopRating alongside the existing mechanicId/rating fields — shop
+  // bookings never get a mechanicId (no assignment step exists anymore),
+  // so a rating for one of those has to go to ShopRating instead of
+  // MechanicRating, which requires a real mechanicId and would reject null.
   const booking = await prisma.booking.findFirst({
     where: {
       id:      bookingId,
       ownerId: session.user.id,
       status:  "DONE",
     },
-    select: { id: true, mechanicId: true, rating: { select: { id: true } } },
+    select: {
+      id: true,
+      mechanicId: true,
+      shopId: true,
+      rating:     { select: { id: true } },
+      shopRating: { select: { id: true } },
+    },
   });
 
   if (!booking)
     return { status: "error", message: "Booking not found or not yet completed." };
 
-  if (booking.rating)
+  if (booking.rating || booking.shopRating)
     return { status: "error", message: "You have already rated this booking." };
+
+  if (!booking.mechanicId && !booking.shopId)
+    return { status: "error", message: "This booking has no mechanic or shop to rate." };
 
   // Analyze sentiment if there's a comment
   const sentiment = comment ? await analyzeSentiment(comment) : "NEUTRAL";
 
-  await prisma.mechanicRating.create({
-    data: {
-      bookingId,
-      mechanicId: booking.mechanicId,
-      ownerId:    session.user.id,
-      rating,
-      comment,
-      sentiment,
-    },
-  });
+  if (booking.mechanicId) {
+    // TS narrows mechanicId to `string` (not `string | null`) inside this
+    // branch — that's what actually fixes the original type error, not
+    // just a cast, since MechanicRating.mechanicId is a required field.
+    await prisma.mechanicRating.create({
+      data: {
+        bookingId,
+        mechanicId: booking.mechanicId,
+        ownerId:    session.user.id,
+        rating,
+        comment,
+        sentiment,
+      },
+    });
+  } else if (booking.shopId) {
+    // Matches the exact field set shop.ts's existing rateShop() uses —
+    // ShopRating doesn't currently take a sentiment field there, so this
+    // doesn't invent one for consistency's sake.
+    await prisma.shopRating.create({
+      data: {
+        bookingId,
+        shopId:  booking.shopId,
+        ownerId: session.user.id,
+        rating,
+        comment,
+      },
+    });
+  }
 
   revalidatePath("/dashboard/owner");
   revalidatePath("/dashboard/owner/bookings");

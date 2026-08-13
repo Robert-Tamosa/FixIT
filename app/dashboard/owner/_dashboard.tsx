@@ -9,12 +9,12 @@ import { NotificationBell } from "@/components/NotificationBell";
 
 const BookingModalLazy = dynamic(
   () => import("./bookingModal").then((m) => m.BookingModal),
-  { ssr: false }
+  { ssr: false },
 );
 
 const EmergencyModalLazy = dynamic(
   () => import("./emergencyModal").then((m) => m.EmergencyModal),
-  { ssr: false }
+  { ssr: false },
 );
 
 // ── Exported types (imported by page.tsx for transformation) ──────────────────
@@ -31,9 +31,16 @@ export interface DisplayBooking {
   id: string;
   mechanicName: string;
   mechanicInitials: string | null;
+  ShopName: string;
   mechanicRating: number;
   service: string; // problemDescription from DB
-  status: "PENDING" | "CONFIRMED" | "ESTIMATE_ACCEPTED" | "EN_ROUTE" | "IN_PROGRESS" | "DONE";
+  status:
+    | "PENDING"
+    | "CONFIRMED"
+    | "ESTIMATE_ACCEPTED"
+    | "EN_ROUTE"
+    | "IN_PROGRESS"
+    | "DONE";
   scheduledAt: string | null; // pre-formatted string from page.tsx
   price: string; // e.g. "₱850" or "TBD"
   vehicleLabel: string; // e.g. "Toyota Vios"
@@ -62,30 +69,32 @@ export interface DisplayMechanic {
 }
 
 export interface DisplayVehicle {
-  id:    string;
+  id: string;
   label: string;
 }
 
 interface SearchResult {
-  id:             string;
-  name:           string;
-  initials:       string;
+  id: string;
+  name: string;
+  initials: string;
   specialization: string;
-  rating:         number;
-  reviews:        number;
-  available:      boolean;
+  rating: number;
+  reviews: number;
+  available: boolean;
 }
 
 // ── Step config (drives ActiveBookingCard's progress bar only — PENDING and
 //    CONFIRMED never reach this component, they render as PendingBookingCard
 //    instead, so they don't belong in this progression) ─────────────────────
+//
+// Two separate progressions, same reasoning as booking-actions.ts's
+// MECHANIC_NEXT_STATUS / SHOP_NEXT_STATUS split: an independent mechanic
+// travels to the owner (includes EN_ROUTE), but a shop booking has the
+// owner bringing the vehicle to the shop instead — nobody is traveling to
+// anybody, so EN_ROUTE is skipped entirely for shop bookings.
 
-const STEPS = [
-  "ESTIMATE_ACCEPTED",
-  "EN_ROUTE",
-  "IN_PROGRESS",
-  "DONE",
-] as const;
+const MECHANIC_STEPS = ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS", "DONE"] as const;
+const SHOP_STEPS = ["ESTIMATE_ACCEPTED", "IN_PROGRESS", "DONE"] as const;
 const LABELS: Record<string, string> = {
   ESTIMATE_ACCEPTED: "Confirmed",
   EN_ROUTE: "En Route",
@@ -130,42 +139,59 @@ function Header({
   user,
   onBookMechanic,
 }: {
-  user:           SessionUser;
+  user: SessionUser;
   onBookMechanic: (mechanicId: string, mechanicName: string) => void;
 }) {
-  const h         = new Date().getHours();
-  const greeting  = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  const h = new Date().getHours();
+  const greeting =
+    h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
   const firstName = user.name.split(" ")[0];
-  const initials  = getInitials(user.name);
+  const initials = getInitials(user.name);
 
-  const [query,   setQuery]   = useState("");
+  const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [isOpen,  setIsOpen]  = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchResults = useCallback(async (q: string) => {
     setLoading(true);
     try {
-      const res  = await fetch(`/api/mechanic/search?q=${encodeURIComponent(q)}&available=false`);
+      const res = await fetch(
+        `/api/mechanic/search?q=${encodeURIComponent(q)}&available=false`,
+      );
       const data = (await res.json()) as { results?: SearchResult[] };
       setResults(data.results ?? []);
       setIsOpen(true);
-    } catch { setResults([]); }
-    finally  { setLoading(false); }
+    } catch {
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    if (!query.trim()) { setResults([]); setIsOpen(false); return; }
+    if (!query.trim()) {
+      setResults([]);
+      setIsOpen(false);
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { void fetchResults(query); }, 350);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    debounceRef.current = setTimeout(() => {
+      void fetchResults(query);
+    }, 350);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [query, fetchResults]);
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setIsOpen(false);
       }
     }
@@ -179,11 +205,26 @@ function Header({
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M10 2L4 4.5V10.5C4 14.7 6.8 18.5 10 19.5C13.2 18.5 16 14.7 16 10.5V4.5L10 2Z"
-                fill="#F59E0B" fillOpacity="0.25" stroke="#F59E0B" strokeWidth="1.2" />
-              <path d="M7.5 10.5L9.5 12.5L13.5 8.5"
-                stroke="#F59E0B" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 20 20"
+              fill="none"
+              aria-hidden="true">
+              <path
+                d="M10 2L4 4.5V10.5C4 14.7 6.8 18.5 10 19.5C13.2 18.5 16 14.7 16 10.5V4.5L10 2Z"
+                fill="#F59E0B"
+                fillOpacity="0.25"
+                stroke="#F59E0B"
+                strokeWidth="1.2"
+              />
+              <path
+                d="M7.5 10.5L9.5 12.5L13.5 8.5"
+                stroke="#F59E0B"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
             <span className="text-[20px] font-black tracking-tight text-zinc-100 leading-none">
               Fix<span className="text-amber-400">IT</span>
@@ -196,24 +237,47 @@ function Header({
         </div>
         <div className="flex items-center gap-2.5">
           <NotificationBell />
-          <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20
+          <div
+            className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20
             flex items-center justify-center">
-            <span className="text-[11px] font-bold text-amber-400">{initials}</span>
+            <span className="text-[11px] font-bold text-amber-400">
+              {initials}
+            </span>
           </div>
         </div>
       </div>
       {/* Search bar + dropdown */}
-      <div className="relative w-full" ref={containerRef}>
-        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"
-          width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="11" cy="11" r="8" stroke="#52525B" strokeWidth="1.8" />
-          <path d="M21 21l-4.35-4.35" stroke="#52525B" strokeWidth="1.8" strokeLinecap="round" />
+      <div
+        className="relative w-full"
+        ref={containerRef}>
+        <svg
+          className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10"
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true">
+          <circle
+            cx="11"
+            cy="11"
+            r="8"
+            stroke="#52525B"
+            strokeWidth="1.8"
+          />
+          <path
+            d="M21 21l-4.35-4.35"
+            stroke="#52525B"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
         </svg>
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => { if (results.length > 0) setIsOpen(true); }}
+          onFocus={() => {
+            if (results.length > 0) setIsOpen(true);
+          }}
           placeholder="Search mechanics, services…"
           className="w-full pl-10 pr-4 py-2.5 rounded-xl
             bg-white/[0.04] border border-white/[0.08]
@@ -224,13 +288,16 @@ function Header({
 
         {/* ── Dropdown ── */}
         {isOpen && (
-          <div className="absolute top-full left-0 right-0 mt-2 z-50
+          <div
+            className="absolute top-full left-0 right-0 mt-2 z-50
             bg-[#12141A] border border-white/[0.09] rounded-2xl
             shadow-[0_8px_40px_rgba(0,0,0,0.6)] overflow-hidden">
             {loading ? (
               <div className="divide-y divide-white/[0.05]">
                 {[...Array(3)].map((_, i) => (
-                  <div key={i} className="flex items-center gap-3 px-4 py-3.5 animate-pulse">
+                  <div
+                    key={i}
+                    className="flex items-center gap-3 px-4 py-3.5 animate-pulse">
                     <div className="w-9 h-9 rounded-xl bg-white/[0.06] shrink-0" />
                     <div className="flex-1 space-y-1.5">
                       <div className="h-3 w-28 bg-white/[0.06] rounded" />
@@ -247,34 +314,46 @@ function Header({
               <div>
                 <div className="divide-y divide-white/[0.05]">
                   {results.slice(0, 5).map((m) => (
-                    <div key={m.id}
+                    <div
+                      key={m.id}
                       className="flex items-center gap-3 px-4 py-3
                         hover:bg-white/[0.04] transition-colors">
                       {/* Avatar */}
-                      <div className={[
-                        "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold",
-                        m.available
-                          ? "bg-amber-400/10 border border-amber-400/20 text-amber-400"
-                          : "bg-white/[0.05] border border-white/[0.08] text-zinc-500",
-                      ].join(" ")}>
+                      <div
+                        className={[
+                          "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold",
+                          m.available
+                            ? "bg-amber-400/10 border border-amber-400/20 text-amber-400"
+                            : "bg-white/[0.05] border border-white/[0.08] text-zinc-500",
+                        ].join(" ")}>
                         {m.initials}
                       </div>
                       {/* Info */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 mb-0.5">
-                          <p className="text-sm font-semibold text-zinc-100 truncate">{m.name}</p>
-                          <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${
-                            m.available ? "bg-emerald-400" : "bg-zinc-600"
-                          }`} />
+                          <p className="text-sm font-semibold text-zinc-100 truncate">
+                            {m.name}
+                          </p>
+                          <span
+                            className={`shrink-0 w-1.5 h-1.5 rounded-full ${
+                              m.available ? "bg-emerald-400" : "bg-zinc-600"
+                            }`}
+                          />
                         </div>
-                        <p className="text-xs text-zinc-500 truncate">{m.specialization}</p>
+                        <p className="text-xs text-zinc-500 truncate">
+                          {m.specialization}
+                        </p>
                       </div>
                       {/* Rating + Book */}
                       <div className="flex items-center gap-2 shrink-0">
                         {m.rating > 0 && (
                           <span className="text-[11px] text-zinc-400 flex items-center gap-0.5">
-                            <svg width="10" height="10" viewBox="0 0 24 24"
-                              fill="#F59E0B" aria-hidden="true">
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="#F59E0B"
+                              aria-hidden="true">
                               <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                             </svg>
                             {m.rating}
@@ -289,8 +368,7 @@ function Header({
                           className="text-[11px] font-bold text-[#080909]
                             bg-amber-400 hover:bg-amber-300
                             px-2.5 py-1 rounded-lg
-                            transition-colors active:scale-95"
-                        >
+                            transition-colors active:scale-95">
                           Book
                         </button>
                       </div>
@@ -302,8 +380,7 @@ function Header({
                     <a
                       href={`/dashboard/owner/search?q=${encodeURIComponent(query)}`}
                       className="text-xs text-amber-400 hover:text-amber-300 font-semibold"
-                      onClick={() => setIsOpen(false)}
-                    >
+                      onClick={() => setIsOpen(false)}>
                       View all {results.length} results →
                     </a>
                   </div>
@@ -338,21 +415,36 @@ function ActionButtonsRow({
 }) {
   if (dispatched) {
     return (
-      <div className="mb-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 px-5 py-4
+      <div
+        className="mb-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 px-5 py-4
         flex items-center gap-3">
         <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M20 6L9 17l-5-5" stroke="#34D399" strokeWidth="2"
-              strokeLinecap="round" strokeLinejoin="round" />
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true">
+            <path
+              d="M20 6L9 17l-5-5"
+              stroke="#34D399"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </div>
         <div>
-          <p className="text-sm font-semibold text-emerald-400">Help is on the way</p>
+          <p className="text-sm font-semibold text-emerald-400">
+            Help is on the way
+          </p>
           <p className="text-xs text-zinc-500">
-            {dispatched.mechanicName} dispatched · Est. {dispatched.etaMinutes} mins
+            {dispatched.mechanicName} dispatched · Est. {dispatched.etaMinutes}{" "}
+            mins
           </p>
         </div>
-        <button onClick={onDismissDispatched}
+        <button
+          onClick={onDismissDispatched}
           className="ml-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
           Dismiss
         </button>
@@ -363,9 +455,11 @@ function ActionButtonsRow({
   return (
     <div className="relative mb-5 flex gap-3">
       {/* Ping glow scoped to emergency half only */}
-      <div aria-hidden="true"
+      <div
+        aria-hidden="true"
         className="absolute inset-y-0 left-0 right-[calc(50%+6px)] rounded-2xl bg-red-500/15 animate-ping"
-        style={{ animationDuration: "2.5s" }} />
+        style={{ animationDuration: "2.5s" }}
+      />
 
       {/* Emergency */}
       <button
@@ -375,15 +469,44 @@ function ActionButtonsRow({
           flex items-center justify-center gap-2.5
           active:scale-[0.98] transition-transform duration-100
           shadow-[0_6px_36px_rgba(239,68,68,0.28)]">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
-            fill="white" fillOpacity="0.15" stroke="white" strokeWidth="1.5"
-            strokeLinecap="round" strokeLinejoin="round" />
-          <line x1="12" y1="9"  x2="12"   y2="13"   stroke="white" strokeWidth="2"   strokeLinecap="round" />
-          <line x1="12" y1="17" x2="12.01" y2="17"   stroke="white" strokeWidth="2.5" strokeLinecap="round" />
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true">
+          <path
+            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+            fill="white"
+            fillOpacity="0.15"
+            stroke="white"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <line
+            x1="12"
+            y1="9"
+            x2="12"
+            y2="13"
+            stroke="white"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+          <line
+            x1="12"
+            y1="17"
+            x2="12.01"
+            y2="17"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+          />
         </svg>
         <div className="text-left">
-          <p className="text-white font-bold text-[13px] leading-tight">Emergency</p>
+          <p className="text-white font-bold text-[13px] leading-tight">
+            Emergency
+          </p>
           <p className="text-white/55 text-[11px] mt-0.5">Get Help Now</p>
         </div>
       </button>
@@ -396,17 +519,73 @@ function ActionButtonsRow({
           flex items-center justify-center gap-2.5
           active:scale-[0.98] transition-transform duration-100
           shadow-[0_6px_36px_rgba(245,158,11,0.22)]">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="18" rx="2"
-            stroke="#080909" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          <line x1="16" y1="2"  x2="16" y2="6"  stroke="#080909" strokeWidth="1.6" strokeLinecap="round" />
-          <line x1="8"  y1="2"  x2="8"  y2="6"  stroke="#080909" strokeWidth="1.6" strokeLinecap="round" />
-          <line x1="3"  y1="10" x2="21" y2="10" stroke="#080909" strokeWidth="1.6" strokeLinecap="round" />
-          <line x1="12" y1="14" x2="12" y2="18" stroke="#080909" strokeWidth="1.6" strokeLinecap="round" />
-          <line x1="10" y1="16" x2="14" y2="16" stroke="#080909" strokeWidth="1.6" strokeLinecap="round" />
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true">
+          <rect
+            x="3"
+            y="4"
+            width="18"
+            height="18"
+            rx="2"
+            stroke="#080909"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <line
+            x1="16"
+            y1="2"
+            x2="16"
+            y2="6"
+            stroke="#080909"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <line
+            x1="8"
+            y1="2"
+            x2="8"
+            y2="6"
+            stroke="#080909"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <line
+            x1="3"
+            y1="10"
+            x2="21"
+            y2="10"
+            stroke="#080909"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <line
+            x1="12"
+            y1="14"
+            x2="12"
+            y2="18"
+            stroke="#080909"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <line
+            x1="10"
+            y1="16"
+            x2="14"
+            y2="16"
+            stroke="#080909"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
         </svg>
         <div className="text-left">
-          <p className="text-[#080909] font-bold text-[13px] leading-tight">Book a Service</p>
+          <p className="text-[#080909] font-bold text-[13px] leading-tight">
+            Book a Service
+          </p>
           <p className="text-black/50 text-[11px] mt-0.5">Schedule a service</p>
         </div>
       </button>
@@ -417,7 +596,12 @@ function ActionButtonsRow({
 // ── Active Booking Card ───────────────────────────────────────────────────────
 
 function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
-  const stepIndex = STEPS.indexOf(booking.status as (typeof STEPS)[number]);
+  // ShopName is only populated for shop bookings (mechanicId stays null for
+  // those — no assignment step exists anymore), so its presence is what
+  // tells us which step progression and which name to show.
+  const isShopBooking = !!booking.ShopName;
+  const steps = isShopBooking ? SHOP_STEPS : MECHANIC_STEPS;
+  const stepIndex = (steps as readonly string[]).indexOf(booking.status);
   const router = useRouter();
 
   return (
@@ -453,7 +637,7 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-zinc-100 text-sm">
-            {booking.mechanicName}
+            {isShopBooking ? booking.ShopName : booking.mechanicName}
           </p>
           <p className="text-xs text-zinc-500 mt-0.5 truncate">
             {booking.service}
@@ -468,7 +652,7 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
       {/* Progress steps */}
       <div className="mb-5">
         <div className="flex items-center mb-2">
-          {STEPS.map((step, i) => (
+          {steps.map((step, i) => (
             <div
               key={step}
               className="flex items-center flex-1 last:flex-none">
@@ -500,7 +684,7 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
                   i + 1
                 )}
               </div>
-              {i < STEPS.length - 1 && (
+              {i < steps.length - 1 && (
                 <div
                   className={[
                     "flex-1 h-[2px] mx-1 transition-all",
@@ -512,7 +696,7 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
           ))}
         </div>
         <div className="flex justify-between">
-          {STEPS.map((step, i) => (
+          {steps.map((step, i) => (
             <span
               key={step}
               className={[
@@ -572,17 +756,16 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
           Track Live
         </button>
         <button
-          aria-label="Call mechanic"
-          className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08]
-            flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
+          aria-label="Message mechanic"
+          className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
           <svg
-            width="14"
-            height="14"
+            width="20"
+            height="20"
             viewBox="0 0 24 24"
             fill="none"
             aria-hidden="true">
             <path
-              d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.4 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 8.9a16 16 0 0 0 6 6l.95-.96a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+              d="M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z"
               stroke="#71717A"
               strokeWidth="1.5"
               strokeLinecap="round"
@@ -737,11 +920,11 @@ const NAV_ITEMS = [
     icon: "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9l2 2 4-4",
   },
   {
-  label: "Chats",
-  href: "/dashboard/owner/chats",
-  active: false,
-  icon: "M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z",
-},
+    label: "Chats",
+    href: "/dashboard/owner/chats",
+    active: false,
+    icon: "M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z",
+  },
   {
     label: "Profile",
     href: "/dashboard/owner/profile",
@@ -762,16 +945,14 @@ function BottomNav() {
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-50
-      bg-[#080909]/95 backdrop-blur-xl border-t border-white/[0.06]"
-    >
+      bg-[#080909]/95 backdrop-blur-xl border-t border-white/[0.06]">
       <div className="max-w-2xl mx-auto flex items-center justify-around px-2 py-3 pb-5">
         {NAV_ITEMS.map(({ label, href, icon }) =>
           label === "Messages" ? (
             <Link
               key={label}
               href="/dashboard/owner/chats"
-              className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95"
-            >
+              className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95">
               <svg
                 width="22"
                 height="22"
@@ -781,15 +962,13 @@ function BottomNav() {
                 strokeWidth="1.7"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                aria-hidden="true"
-              >
+                aria-hidden="true">
                 <path d={icon} />
               </svg>
               <span
                 className={`text-[10px] font-medium leading-none ${
                   active === label ? "text-amber-400" : "text-zinc-600"
-                }`}
-              >
+                }`}>
                 {label}
               </span>
             </Link>
@@ -799,8 +978,7 @@ function BottomNav() {
               aria-label={label}
               aria-current={active === label ? "page" : undefined}
               onClick={() => handleNav(label, href)}
-              className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95"
-            >
+              className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95">
               <svg
                 width="22"
                 height="22"
@@ -810,19 +988,17 @@ function BottomNav() {
                 strokeWidth="1.7"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                aria-hidden="true"
-              >
+                aria-hidden="true">
                 <path d={icon} />
               </svg>
               <span
                 className={`text-[10px] font-medium leading-none ${
                   active === label ? "text-amber-400" : "text-zinc-600"
-                }`}
-              >
+                }`}>
                 {label}
               </span>
             </button>
-          )
+          ),
         )}
       </div>
     </nav>
@@ -839,7 +1015,8 @@ export function AIDiagnosticChathead() {
     <div className="fixed bottom-24 right-4 z-50 flex flex-col items-end gap-2">
       {/* Tooltip label */}
       {pulse && (
-        <div className="flex items-center gap-2 bg-[#111112] border border-white/[0.09]
+        <div
+          className="flex items-center gap-2 bg-[#111112] border border-white/[0.09]
           rounded-2xl px-3 py-2 shadow-xl animate-in fade-in slide-in-from-right-2 duration-300">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
           <p className="text-xs font-medium text-zinc-300 whitespace-nowrap">
@@ -849,9 +1026,17 @@ export function AIDiagnosticChathead() {
             onClick={() => setPulse(false)}
             className="ml-1 text-zinc-600 hover:text-zinc-400 transition-colors"
             aria-label="Dismiss">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <path d="M1 1l8 8M9 1L1 9" stroke="currentColor" strokeWidth="1.4"
-                strokeLinecap="round" />
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 10 10"
+              fill="none">
+              <path
+                d="M1 1l8 8M9 1L1 9"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+              />
             </svg>
           </button>
         </div>
@@ -868,20 +1053,37 @@ export function AIDiagnosticChathead() {
           active:scale-95 transition-transform duration-150
           hover:shadow-[0_8px_40px_rgba(245,158,11,0.55)]">
         {/* Outer ring pulse */}
-        <span className="absolute inset-0 rounded-full bg-amber-400/30 animate-ping"
-          style={{ animationDuration: "2s" }} />
+        <span
+          className="absolute inset-0 rounded-full bg-amber-400/30 animate-ping"
+          style={{ animationDuration: "2s" }}
+        />
         {/* Brain / AI icon */}
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <svg
+          width="26"
+          height="26"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true">
           <path
             d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.66z"
-            stroke="#080909" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            stroke="#080909"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
           <path
             d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.66z"
-            stroke="#080909" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            stroke="#080909"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
         {/* Online dot */}
-        <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full
-          bg-emerald-400 border-2 border-[#080909]" />
+        <span
+          className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full
+          bg-emerald-400 border-2 border-[#080909]"
+        />
       </button>
     </div>
   );
@@ -890,12 +1092,12 @@ export function AIDiagnosticChathead() {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 interface OwnerDashboardProps {
-  user:           SessionUser;
-  activeBooking:  DisplayBooking | null;
+  user: SessionUser;
+  activeBooking: DisplayBooking | null;
   pendingBooking: DisplayBooking | null;
   estimateReview: DisplayEstimateReview | null;
-  mechanics:      DisplayMechanic[];
-  vehicles?:      DisplayVehicle[];
+  mechanics: DisplayMechanic[];
+  vehicles?: DisplayVehicle[];
 }
 
 // ── Pending Booking Card ──────────────────────────────────────────────────────
@@ -908,31 +1110,67 @@ function PendingBookingCard({ booking }: { booking: DisplayBooking }) {
       <div className="flex items-center gap-2 mb-4">
         <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
         <span className="text-sm font-semibold text-zinc-100">
-          {isAwaitingEstimate ? "Mechanic Reviewing Your Request" : "Awaiting Mechanic Response"}
+          {isAwaitingEstimate
+            ? "Mechanic Reviewing Your Request"
+            : "Awaiting Mechanic Response"}
         </span>
       </div>
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-11 h-11 rounded-xl bg-amber-400/10 border border-amber-400/20
+        <div
+          className="w-11 h-11 rounded-xl bg-amber-400/10 border border-amber-400/20
           flex items-center justify-center shrink-0">
-          <span className="text-sm font-bold text-amber-400">{booking.mechanicInitials}</span>
+          <span className="text-sm font-bold text-amber-400">
+            {booking.mechanicInitials}
+          </span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-zinc-100 text-sm">{booking.mechanicName}</p>
-          <p className="text-xs text-zinc-500 truncate">{booking.vehicleLabel}</p>
+          <p className="font-semibold text-zinc-100 text-sm">
+            {booking.mechanicName}
+          </p>
+          <p className="text-xs text-zinc-500 truncate">
+            {booking.vehicleLabel}
+          </p>
         </div>
         <span className="text-sm font-bold text-zinc-100">{booking.price}</span>
       </div>
-      <p className="text-xs text-zinc-400 mb-4 leading-relaxed line-clamp-2">{booking.service}</p>
-      <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl
+      <p className="text-xs text-zinc-400 mb-4 leading-relaxed line-clamp-2">
+        {booking.service}
+      </p>
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 rounded-xl
         bg-amber-400/[0.06] border border-amber-400/15">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" stroke="#F59E0B" strokeWidth="1.5" />
-          <path d="M12 6v6l4 2" stroke="#F59E0B" strokeWidth="1.5" strokeLinecap="round" />
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true">
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="#F59E0B"
+            strokeWidth="1.5"
+          />
+          <path
+            d="M12 6v6l4 2"
+            stroke="#F59E0B"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
         </svg>
         <p className="text-xs text-amber-400/80">
-          {isAwaitingEstimate
-            ? "The mechanic accepted your request and is preparing a cost estimate."
-            : <>Request sent{booking.scheduledAt ? ` · Scheduled: ${booking.scheduledAt}` : ""}. Waiting for mechanic to accept.</>}
+          {isAwaitingEstimate ? (
+            "The mechanic accepted your request and is preparing a cost estimate."
+          ) : (
+            <>
+              Request sent
+              {booking.scheduledAt
+                ? ` · Scheduled: ${booking.scheduledAt}`
+                : ""}
+              . Waiting for mechanic to accept.
+            </>
+          )}
         </p>
       </div>
     </div>
@@ -957,7 +1195,9 @@ function EstimateReviewCard({ booking }: { booking: DisplayEstimateReview }) {
         await acceptEstimate(booking.id);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not accept the estimate");
+        setError(
+          e instanceof Error ? e.message : "Could not accept the estimate",
+        );
       }
     });
   }
@@ -970,7 +1210,9 @@ function EstimateReviewCard({ booking }: { booking: DisplayEstimateReview }) {
         await declineEstimate(booking.id);
         router.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not decline the estimate");
+        setError(
+          e instanceof Error ? e.message : "Could not decline the estimate",
+        );
       }
     });
   }
@@ -979,30 +1221,51 @@ function EstimateReviewCard({ booking }: { booking: DisplayEstimateReview }) {
     <div className="mb-5 rounded-2xl border border-blue-400/25 bg-blue-400/[0.05] p-5">
       <div className="flex items-center gap-2 mb-4">
         <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-        <span className="text-sm font-semibold text-zinc-100">Repair Estimate Ready</span>
+        <span className="text-sm font-semibold text-zinc-100">
+          Repair Estimate Ready
+        </span>
       </div>
 
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-11 h-11 rounded-xl bg-blue-400/10 border border-blue-400/20
+        <div
+          className="w-11 h-11 rounded-xl bg-blue-400/10 border border-blue-400/20
           flex items-center justify-center shrink-0">
-          <span className="text-sm font-bold text-blue-400">{booking.mechanicInitials}</span>
+          <span className="text-sm font-bold text-blue-400">
+            {booking.mechanicInitials}
+          </span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-zinc-100 text-sm">{booking.mechanicName}</p>
-          <p className="text-xs text-zinc-500 truncate">{booking.vehicleLabel}</p>
+          <p className="font-semibold text-zinc-100 text-sm">
+            {booking.mechanicName}
+          </p>
+          <p className="text-xs text-zinc-500 truncate">
+            {booking.vehicleLabel}
+          </p>
         </div>
       </div>
 
-      <p className="text-xs text-zinc-400 mb-4 leading-relaxed line-clamp-2">{booking.service}</p>
+      <p className="text-xs text-zinc-400 mb-4 leading-relaxed line-clamp-2">
+        {booking.service}
+      </p>
 
       <div className="rounded-xl bg-white/[0.03] border border-white/[0.07] p-3.5 mb-4 space-y-1.5">
         <div className="flex justify-between text-xs">
           <span className="text-zinc-500">Labor</span>
-          <span className="text-zinc-300">₱{booking.laborCost.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span>
+          <span className="text-zinc-300">
+            ₱
+            {booking.laborCost.toLocaleString("en-PH", {
+              minimumFractionDigits: 2,
+            })}
+          </span>
         </div>
         <div className="flex justify-between text-xs">
           <span className="text-zinc-500">Parts</span>
-          <span className="text-zinc-300">₱{booking.partsCost.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</span>
+          <span className="text-zinc-300">
+            ₱
+            {booking.partsCost.toLocaleString("en-PH", {
+              minimumFractionDigits: 2,
+            })}
+          </span>
         </div>
         {booking.notes && (
           <p className="text-xs text-zinc-500 pt-1.5 border-t border-white/[0.06] leading-relaxed">
@@ -1012,18 +1275,25 @@ function EstimateReviewCard({ booking }: { booking: DisplayEstimateReview }) {
         <div className="flex justify-between items-center pt-1.5 border-t border-white/[0.06]">
           <span className="text-xs font-semibold text-zinc-300">Total</span>
           <span className="text-base font-bold text-amber-400">
-            ₱{booking.totalCost.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+            ₱
+            {booking.totalCost.toLocaleString("en-PH", {
+              minimumFractionDigits: 2,
+            })}
           </span>
         </div>
       </div>
 
       {error && (
-        <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2 mb-3">{error}</p>
+        <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2 mb-3">
+          {error}
+        </p>
       )}
 
       {declining ? (
         <div className="space-y-2">
-          <p className="text-xs text-zinc-400">Decline this estimate and cancel the booking?</p>
+          <p className="text-xs text-zinc-400">
+            Decline this estimate and cancel the booking?
+          </p>
           <div className="flex gap-2">
             <button
               onClick={() => setDeclining(false)}
@@ -1069,12 +1339,15 @@ export default function OwnerDashboardView({
   pendingBooking,
   estimateReview,
   mechanics = [],
-  vehicles  = [],
+  vehicles = [],
 }: OwnerDashboardProps) {
-  const [bookingModalOpen,    setBookingModalOpen]    = useState(false);
-  const [preSelectedMechanic, setPreSelectedMechanic] = useState<{ id: string; name: string } | null>(null);
-  const [emergencyModalOpen,  setEmergencyModalOpen]  = useState(false);
-  const [dispatched,          setDispatched]          = useState<DispatchedInfo | null>(null);
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [preSelectedMechanic, setPreSelectedMechanic] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [emergencyModalOpen, setEmergencyModalOpen] = useState(false);
+  const [dispatched, setDispatched] = useState<DispatchedInfo | null>(null);
   // Tracks whether we've actually confirmed (via a poll) that the dispatched
   // booking is currently live, before we're willing to auto-clear it. Without
   // this, the very first poll after dispatch — before the booking has
@@ -1127,18 +1400,28 @@ export default function OwnerDashboardView({
 
   return (
     <div className="min-h-screen w-screen bg-[#080909] relative">
-      <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[500px]
-          bg-amber-400/[0.025] rounded-full blur-[130px]" />
-        <div className="absolute inset-0 opacity-[0.012]"
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div
+          className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[500px]
+          bg-amber-400/[0.025] rounded-full blur-[130px]"
+        />
+        <div
+          className="absolute inset-0 opacity-[0.012]"
           style={{
-            backgroundImage: "radial-gradient(circle, #F59E0B 1px, transparent 1px)",
+            backgroundImage:
+              "radial-gradient(circle, #F59E0B 1px, transparent 1px)",
             backgroundSize: "28px 28px",
-          }} />
+          }}
+        />
       </div>
 
       <div className="relative z-10 w-full h-full p-4 pb-28">
-        <Header user={user} onBookMechanic={handleBookMechanic} />
+        <Header
+          user={user}
+          onBookMechanic={handleBookMechanic}
+        />
         <ActionButtonsRow
           onEmergency={() => setEmergencyModalOpen(true)}
           onBookService={() => setBookingModalOpen(true)}
@@ -1165,11 +1448,14 @@ export default function OwnerDashboardView({
       {bookingModalOpen && (
         <BookingModalLazy
           isOpen={bookingModalOpen}
-          onClose={() => { setBookingModalOpen(false); setPreSelectedMechanic(null); }}
+          onClose={() => {
+            setBookingModalOpen(false);
+            setPreSelectedMechanic(null);
+          }}
           mechanics={mechanics}
           preSelectedMechanicId={preSelectedMechanic?.id ?? null}
         />
-      )}  
+      )}
 
       {emergencyModalOpen && (
         <EmergencyModalLazy

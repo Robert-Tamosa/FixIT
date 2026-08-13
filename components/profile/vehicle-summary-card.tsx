@@ -1,7 +1,9 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { addVehicle, type AddVehicleState } from "@/app/actions/add-vehicle";
+import { CORScanButton } from "@/components/vehicle/CORScanButton";
+import type { DisplayVehicleDocument } from "@/app/actions/document-analysis";
 import React from "react";
 
 interface Vehicle {
@@ -41,10 +43,37 @@ function AddVehicleModal({
   const [state, formAction, pending] = useActionState(addVehicle, initialState);
   const formRef = useRef<HTMLFormElement>(null);
 
+  // Refs so a COR scan can prefill these plain uncontrolled inputs without
+  // restructuring the whole form into controlled state.
+  const brandRef = useRef<HTMLInputElement>(null);
+  const modelRef = useRef<HTMLInputElement>(null);
+  const plateRef = useRef<HTMLInputElement>(null);
+  const yearRef = useRef<HTMLInputElement>(null);
+  const colorRef = useRef<HTMLInputElement>(null);
+
+  // Set once a COR scan is confirmed — carried to the server as hidden
+  // fields so addVehicle.ts can attach the document to the new vehicle.
+  const [corDocumentId, setCorDocumentId] = useState<string | null>(null);
+  const [corFields, setCorFields] = useState<DisplayVehicleDocument["fields"] | null>(null);
+
+  function handleCorFieldsReady(fields: DisplayVehicleDocument["fields"], documentId: string) {
+    setCorDocumentId(documentId);
+    setCorFields(fields);
+    // Best-effort prefill — COR's "make"/"series" map loosely to brand/model,
+    // not exactly, so leave them editable rather than treating this as final.
+    if (fields.make && brandRef.current) brandRef.current.value = fields.make;
+    if (fields.series && modelRef.current) modelRef.current.value = fields.series;
+    if (fields.plateNumber && plateRef.current) plateRef.current.value = fields.plateNumber;
+    if (fields.yearModel && yearRef.current) yearRef.current.value = fields.yearModel;
+    if (fields.color && colorRef.current) colorRef.current.value = fields.color;
+  }
+
   // Close + propagate new vehicle on success
   useEffect(() => {
     if (state.status === "success") {
       formRef.current?.reset();
+      setCorDocumentId(null);
+      setCorFields(null);
       onClose();
     }
   }, [state, onClose]);
@@ -100,6 +129,22 @@ function AddVehicleModal({
         {/* Form */}
         <form ref={formRef} action={formAction} className="px-6 py-5 space-y-4">
 
+          {/* COR scan — optional shortcut to prefill the fields below */}
+          <div className="rounded-2xl border border-dashed border-white/[0.12] p-3 flex items-center gap-3">
+            <div className="flex-1">
+              <p className="text-xs font-medium text-zinc-300">Have your COR handy?</p>
+              <p className="text-[11px] text-zinc-600 mt-0.5">Scan it to fill in the details below</p>
+            </div>
+            <CORScanButton onFieldsReady={handleCorFieldsReady} />
+          </div>
+          {corDocumentId && (
+            <p className="text-[11px] text-emerald-400 -mt-2">
+              Scanned — details prefilled below, double-check before saving.
+            </p>
+          )}
+          <input type="hidden" name="corDocumentId" value={corDocumentId ?? ""} />
+          <input type="hidden" name="corFields" value={corFields ? JSON.stringify(corFields) : ""} />
+
           {/* Brand + Model (side by side) */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -108,6 +153,7 @@ function AddVehicleModal({
                 Brand <span className="text-red-500">*</span>
               </label>
               <input
+                ref={brandRef}
                 id="brand" name="brand" type="text"
                 placeholder="Toyota"
                 required
@@ -124,6 +170,7 @@ function AddVehicleModal({
                 Model <span className="text-red-500">*</span>
               </label>
               <input
+                ref={modelRef}
                 id="model" name="model" type="text"
                 placeholder="Vios"
                 required
@@ -143,6 +190,7 @@ function AddVehicleModal({
               Plate Number
             </label>
             <input
+              ref={plateRef}
               id="plateNumber" name="plateNumber" type="text"
               placeholder="ABC 1234  (optional)"
               className="w-full px-3.5 py-2.5 rounded-xl
@@ -161,6 +209,7 @@ function AddVehicleModal({
                 Year
               </label>
               <input
+                ref={yearRef}
                 id="year" name="year" type="number"
                 placeholder="2020"
                 min="1970" max={new Date().getFullYear() + 1}
@@ -178,6 +227,7 @@ function AddVehicleModal({
                 Color
               </label>
               <input
+                ref={colorRef}
                 id="color" name="color" type="text"
                 placeholder="White"
                 className="w-full px-3.5 py-2.5 rounded-xl

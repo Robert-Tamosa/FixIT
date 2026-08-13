@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { inspectVehicleParts, type DisplayInspectionFlag } from "@/app/actions/inspection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,8 @@ interface Message {
   role:    "user" | "assistant";
   content: string;
   loading?: boolean;
+  photo?: string; // data URL, set on the user's message when it's a photo-inspection turn
+  inspectionFlags?: DisplayInspectionFlag[]; // set on the assistant's reply to a photo-inspection turn
 }
 
 interface DiagnosticResult {
@@ -133,14 +136,48 @@ function DiagnosticCard({ result }: { result: DiagnosticResult }) {
   );
 }
 
+// ── Inspection Flags Card ─────────────────────────────────────────────────────
+
+const SEVERITY_STYLES: Record<string, string> = {
+  minor: "text-zinc-400 bg-white/[0.03] border-white/[0.08]",
+  moderate: "text-amber-400 bg-amber-400/10 border-amber-400/20",
+  needs_attention: "text-red-400 bg-red-400/10 border-red-400/20",
+};
+
+function InspectionFlagsCard({ flags }: { flags: DisplayInspectionFlag[] }) {
+  return (
+    <div className="mt-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/[0.07]">
+        <p className="text-[11px] text-zinc-500 leading-relaxed">
+          Spotted from your photo — not a diagnosis, just flags for your mechanic to check in person.
+        </p>
+      </div>
+      <div className="px-4 py-3 space-y-2">
+        {flags.length === 0 ? (
+          <p className="text-xs text-zinc-400">No clear surface issues spotted in this photo.</p>
+        ) : (
+          flags.map((f) => (
+            <div key={f.id} className={`text-xs px-3 py-2.5 rounded-xl border ${
+              f.severity ? SEVERITY_STYLES[f.severity] ?? SEVERITY_STYLES.minor : SEVERITY_STYLES.minor
+            }`}>
+              {f.description}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Message Bubble ────────────────────────────────────────────────────────────
 
 function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.role === "user";
 
-  // Try to parse AI result from assistant messages
+  // Try to parse AI result from assistant messages (skip for inspection replies,
+  // which carry their own inspectionFlags array instead of a JSON-string result)
   let parsed: DiagnosticResult | null = null;
-  if (!isUser && !msg.loading) {
+  if (!isUser && !msg.loading && !msg.inspectionFlags) {
     try {
       parsed = JSON.parse(msg.content);
     } catch {
@@ -164,6 +201,13 @@ function MessageBubble({ msg }: { msg: Message }) {
       )}
 
       <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
+        {msg.photo && (
+          <img
+            src={msg.photo}
+            alt="Photo submitted for inspection"
+            className={`w-40 h-40 object-cover rounded-2xl mb-1.5 ${isUser ? "rounded-tr-sm" : "rounded-tl-sm"}`}
+          />
+        )}
         {msg.loading ? (
           <div className="flex items-center gap-2 px-4 py-3 rounded-2xl rounded-tl-sm
             bg-white/[0.04] border border-white/[0.08]">
@@ -180,6 +224,8 @@ function MessageBubble({ msg }: { msg: Message }) {
           </div>
         ) : parsed ? (
           <DiagnosticCard result={parsed} />
+        ) : msg.inspectionFlags ? (
+          <InspectionFlagsCard flags={msg.inspectionFlags} />
         ) : (
           <div className="px-4 py-2.5 rounded-2xl rounded-tl-sm
             bg-white/[0.04] border border-white/[0.08]">
@@ -204,12 +250,29 @@ export default function AIDiagnosticsChatPage() {
   ]);
   const [input,     setInput]     = useState("");
   const [loading,   setLoading]   = useState(false);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [inspecting, setInspecting] = useState(false);
   const bottomRef  = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLTextAreaElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const captureMenuRef = useRef<HTMLDivElement>(null);
+  const [captureMenuOpen, setCaptureMenuOpen] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!captureMenuOpen) return;
+    function onClick(e: MouseEvent) {
+      if (captureMenuRef.current && !captureMenuRef.current.contains(e.target as Node)) {
+        setCaptureMenuOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [captureMenuOpen]);
 
   async function sendMessage(text?: string) {
     const content = (text ?? input).trim();
@@ -246,6 +309,50 @@ export default function AIDiagnosticsChatPage() {
       ]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function handlePhotoSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  async function handleInspectPhoto() {
+    if (!photoPreview || inspecting) return;
+    const dataUrl = photoPreview;
+    setPhotoPreview(null);
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: "Photo for parts inspection",
+      photo: dataUrl,
+    };
+    const loadingMsg: Message = { id: "loading-inspect", role: "assistant", content: "", loading: true };
+    setMessages((prev) => [...prev, userMsg, loadingMsg]);
+    setInspecting(true);
+
+    try {
+      const flags = await inspectVehicleParts(dataUrl, {});
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== "loading-inspect"),
+        { id: Date.now().toString() + "-flags", role: "assistant", content: "", inspectionFlags: flags },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== "loading-inspect"),
+        {
+          id: Date.now().toString() + "-err",
+          role: "assistant",
+          content: err instanceof Error ? err.message : "Couldn't analyze this photo. Please try again.",
+        },
+      ]);
+    } finally {
+      setInspecting(false);
     }
   }
 
@@ -314,6 +421,57 @@ export default function AIDiagnosticsChatPage() {
       {/* Quick prompts + input — sticky bottom */}
       <div className="sticky bottom-0 bg-[#080909]/95 backdrop-blur-xl
         border-t border-white/[0.06] px-4 pt-3 pb-6">
+
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePhotoSelected}
+          className="hidden"
+        />
+        {/* Plain file input, no capture attribute — opens the normal photo/file picker */}
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handlePhotoSelected}
+          className="hidden"
+        />
+
+        {/* Captured photo preview — shown until the owner taps Inspect or retakes */}
+        {photoPreview && (
+          <div className="mb-3 rounded-2xl bg-white/[0.03] border border-white/[0.08] p-3 flex items-center gap-3">
+            <img src={photoPreview} alt="Captured photo" className="w-14 h-14 object-cover rounded-xl shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-zinc-400">Ready to inspect this photo?</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPhotoPreview(null)}
+              disabled={inspecting}
+              className="px-3 py-2 rounded-xl border border-white/[0.08] text-xs text-zinc-400 disabled:opacity-50 shrink-0"
+            >
+              Retake
+            </button>
+            <button
+              type="button"
+              onClick={handleInspectPhoto}
+              disabled={inspecting}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 text-xs font-semibold text-[#080909]
+                disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+            >
+              {inspecting && (
+                <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="#080909" strokeWidth="3" strokeOpacity="0.25" />
+                  <path d="M12 2a10 10 0 0 1 10 10" stroke="#080909" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              )}
+              {inspecting ? "Analyzing…" : "Inspect Parts Problems"}
+            </button>
+          </div>
+        )}
+
         {/* Quick prompts */}
         <div className="flex gap-2 overflow-x-auto pb-2.5 scrollbar-none">
           {QUICK_PROMPTS.map((p) => (
@@ -331,6 +489,58 @@ export default function AIDiagnosticsChatPage() {
 
         {/* Input row */}
         <div className="flex items-end gap-2.5 mt-1">
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setCaptureMenuOpen((v) => !v)}
+              disabled={loading || inspecting}
+              aria-label="Add a photo for parts inspection"
+              aria-expanded={captureMenuOpen}
+              className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08]
+                flex items-center justify-center hover:bg-white/[0.07] transition-colors
+                disabled:opacity-40 shrink-0"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+                  stroke="#F59E0B" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="12" cy="13" r="4" stroke="#F59E0B" strokeWidth="1.6" />
+              </svg>
+            </button>
+
+            {captureMenuOpen && (
+              <div
+                ref={captureMenuRef}
+                className="absolute bottom-full mb-2 left-0 z-20 w-48 rounded-xl border border-white/[0.08]
+                  bg-[#161616] shadow-xl overflow-hidden"
+              >
+                <button
+                  type="button"
+                  onClick={() => { setCaptureMenuOpen(false); cameraInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs text-zinc-200 hover:bg-white/[0.06] transition-colors text-left"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+                      stroke="#F59E0B" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="12" cy="13" r="4" stroke="#F59E0B" strokeWidth="1.6" />
+                  </svg>
+                  Take Photo
+                </button>
+                <div className="h-px bg-white/[0.06]" />
+                <button
+                  type="button"
+                  onClick={() => { setCaptureMenuOpen(false); galleryInputRef.current?.click(); }}
+                  className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-xs text-zinc-200 hover:bg-white/[0.06] transition-colors text-left"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="#F59E0B" strokeWidth="1.6" />
+                    <circle cx="8.5" cy="8.5" r="1.5" stroke="#F59E0B" strokeWidth="1.6" />
+                    <path d="M21 15l-5-5L5 21" stroke="#F59E0B" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Choose from Gallery
+                </button>
+              </div>
+            )}
+          </div>
           <textarea
             ref={inputRef}
             rows={1}

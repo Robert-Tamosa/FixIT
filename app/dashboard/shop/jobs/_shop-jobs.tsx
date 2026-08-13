@@ -1,20 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { BottomNav } from "../_mechanic-dashboard";
-import { getPayment, type DisplayPayment } from "@/app/actions/payment";
-import { ConfirmCashPaymentButton } from "@/components/payment/ConfirmCashPaymentButton";
+import { BottomNav } from "../_shop-dashboard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface JobItem {
+export interface ShopJobItem {
   id:            string;
   ownerName:     string;
   ownerInitials: string;
   vehicleLabel:  string;
   problem:       string;
-  status:        "PENDING" | "CONFIRMED" | "EN_ROUTE" | "IN_PROGRESS" | "DONE" | "CANCELLED";
+  // Full status set, unlike the mechanic side's JobItem (which only covers
+  // PENDING/CONFIRMED/EN_ROUTE/IN_PROGRESS/DONE/CANCELLED and falls back to
+  // "Pending" for anything else) — worth fixing there too, flagged
+  // separately. Shop bookings never hit EN_ROUTE at all (skipped per the
+  // shop-lifecycle decision), kept in the union anyway since it's harmless
+  // and matches the real Booking.status enum.
+  status:        "PENDING" | "DECLINED" | "CONFIRMED" | "ESTIMATE_SENT" | "ESTIMATE_ACCEPTED"
+                | "EN_ROUTE" | "IN_PROGRESS" | "DONE" | "CANCELLED";
   scheduledAt:   string | null;
   price:         string;
   isEmergency:   boolean;
@@ -22,11 +27,11 @@ export interface JobItem {
   rating:        number | null;
 }
 
-export interface MechanicJobsProps {
-  jobs:         JobItem[];
+export interface ShopJobsProps {
+  jobs:          ShopJobItem[];
   totalEarnings: string;
-  doneCount:    number;
-  cancelCount:  number;
+  doneCount:     number;
+  cancelCount:   number;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -36,16 +41,23 @@ const STATUS_CONFIG: Record<string, {
   cls:   string;
   dot:   string;
 }> = {
-  PENDING:     { label: "Pending",     cls: "text-amber-400   bg-amber-400/10   border-amber-400/20",   dot: "bg-amber-400"   },
-  CONFIRMED:   { label: "Confirmed",   cls: "text-sky-400     bg-sky-400/10     border-sky-400/20",     dot: "bg-sky-400"     },
-  EN_ROUTE:    { label: "En Route",    cls: "text-blue-400    bg-blue-400/10    border-blue-400/20",    dot: "bg-blue-400 animate-pulse"    },
-  IN_PROGRESS: { label: "In Progress", cls: "text-orange-400  bg-orange-400/10  border-orange-400/20",  dot: "bg-orange-400 animate-pulse"  },
-  DONE:        { label: "Completed",   cls: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", dot: "bg-emerald-400" },
-  CANCELLED:   { label: "Cancelled",   cls: "text-red-400     bg-red-400/10     border-red-400/20",     dot: "bg-red-400"     },
+  PENDING:            { label: "Pending",           cls: "text-amber-400   bg-amber-400/10   border-amber-400/20",   dot: "bg-amber-400"   },
+  DECLINED:           { label: "Declined",          cls: "text-red-400     bg-red-400/10     border-red-400/20",     dot: "bg-red-400"     },
+  CONFIRMED:          { label: "Confirmed",         cls: "text-sky-400     bg-sky-400/10     border-sky-400/20",     dot: "bg-sky-400"     },
+  ESTIMATE_SENT:      { label: "Estimate Sent",     cls: "text-sky-400     bg-sky-400/10     border-sky-400/20",     dot: "bg-sky-400 animate-pulse" },
+  ESTIMATE_ACCEPTED:  { label: "Estimate Accepted", cls: "text-blue-400    bg-blue-400/10    border-blue-400/20",    dot: "bg-blue-400"    },
+  EN_ROUTE:           { label: "En Route",          cls: "text-blue-400    bg-blue-400/10    border-blue-400/20",    dot: "bg-blue-400 animate-pulse"    },
+  IN_PROGRESS:        { label: "In Progress",       cls: "text-orange-400  bg-orange-400/10  border-orange-400/20",  dot: "bg-orange-400 animate-pulse"  },
+  DONE:               { label: "Completed",         cls: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", dot: "bg-emerald-400" },
+  CANCELLED:          { label: "Cancelled",         cls: "text-red-400     bg-red-400/10     border-red-400/20",     dot: "bg-red-400"     },
 };
 
 const FILTERS = ["All", "Active", "Pending", "Completed", "Cancelled"] as const;
 type Filter = typeof FILTERS[number];
+
+// Shop bookings never reach EN_ROUTE (skipped — customer brings the vehicle
+// to the shop's own address), included here anyway for parity/safety.
+const ACTIVE_STATUSES = ["CONFIRMED", "ESTIMATE_SENT", "ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -74,59 +86,8 @@ function StarRating({ value }: { value: number }) {
   );
 }
 
-// Fetches its own payment status rather than requiring JobItem to carry
-// payment fields — keeps this self-contained without needing to touch
-// whatever page.tsx currently populates the jobs list server-side.
-// Only rendered for DONE jobs (see JobCard below), so the extra fetch only
-// fires for a small, already-filtered subset of the list.
-function PaymentStatusStrip({ bookingId }: { bookingId: string }) {
-  const [payment, setPayment] = useState<DisplayPayment | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    getPayment(bookingId)
-      .then((p) => { if (!cancelled) setPayment(p); })
-      .catch(() => { /* best-effort — leave the card without this strip on error */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [bookingId]);
-
-  if (loading) return null;
-  if (!payment || !payment.method) return null; // owner hasn't reached payment yet
-
-  if (payment.status === "PAID") {
-    return (
-      <div className="mb-3 px-3 py-2 rounded-xl bg-emerald-400/10 border border-emerald-400/20
-        text-[11px] font-semibold text-emerald-400 text-center">
-        Paid {payment.method === "CASH" ? "in cash" : `via ${payment.paidVia ?? "online"}`}
-      </div>
-    );
-  }
-
-  if (payment.method === "CASH" && payment.status === "PENDING") {
-    return (
-      <div className="mb-3">
-        <ConfirmCashPaymentButton bookingId={bookingId} />
-      </div>
-    );
-  }
-
-  if (payment.method === "ONLINE" && payment.status === "PENDING") {
-    return (
-      <div className="mb-3 px-3 py-2 rounded-xl bg-white/[0.02] border border-white/[0.06]
-        text-[11px] text-zinc-500 text-center">
-        Waiting on owner's online payment
-      </div>
-    );
-  }
-
-  return null;
-}
-
-function JobCard({ job }: { job: JobItem }) {
-  const router  = useRouter();
-  const isActive = ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"].includes(job.status);
+function JobCard({ job }: { job: ShopJobItem }) {
+  const isActive = ACTIVE_STATUSES.includes(job.status);
 
   return (
     <div className={`rounded-2xl border bg-white/[0.03] p-4 transition-all ${
@@ -177,7 +138,7 @@ function JobCard({ job }: { job: JobItem }) {
         )}
       </div>
 
-      {/* Rating (if completed) */}
+      {/* Rating (if completed) — from ShopRating, not MechanicRating */}
       {job.status === "DONE" && job.rating !== null && (
         <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-xl
           bg-amber-400/[0.05] border border-amber-400/10">
@@ -194,46 +155,26 @@ function JobCard({ job }: { job: JobItem }) {
         </div>
       )}
 
-      {job.status === "DONE" && <PaymentStatusStrip bookingId={job.id} />}
-
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        {/* Booking ID */}
-        <span className="flex-1 flex items-center px-3 py-2 rounded-xl
-          bg-white/[0.02] border border-white/[0.06]
-          text-[10px] font-mono text-zinc-600 truncate">
-          {job.id.slice(0, 16).toUpperCase()}
-        </span>
-
-        {/* Track button — only for active jobs */}
-        {isActive && (
-          <button
-            onClick={() => router.push(`/dashboard/mechanic/tracking/${job.id}`)}
-            className="px-3 py-2 rounded-xl bg-emerald-400/10 border border-emerald-400/20
-              text-xs font-semibold text-emerald-400
-              hover:bg-emerald-400/15 transition-colors flex items-center gap-1.5 shrink-0">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
-                stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <circle cx="12" cy="10" r="3"
-                stroke="currentColor" strokeWidth="1.8" />
-            </svg>
-            Track
-          </button>
-        )}
-      </div>
+      {/* Booking ID — no Track button here, unlike the mechanic side: shop
+          bookings have no live-tracking screen (customer brings the vehicle
+          to the shop's own address, nobody is traveling to anybody). */}
+      <span className="flex items-center px-3 py-2 rounded-xl
+        bg-white/[0.02] border border-white/[0.06]
+        text-[10px] font-mono text-zinc-600 truncate">
+        {job.id.slice(0, 16).toUpperCase()}
+      </span>
     </div>
   );
 }
 
 // ── Main View ─────────────────────────────────────────────────────────────────
 
-export default function MechanicJobsView({
+export default function ShopJobsView({
   jobs,
   totalEarnings,
   doneCount,
   cancelCount,
-}: MechanicJobsProps) {
+}: ShopJobsProps) {
   const router = useRouter();
   const [filter, setFilter] = useState<Filter>("All");
   const [search, setSearch] = useState("");
@@ -241,7 +182,7 @@ export default function MechanicJobsView({
   const filtered = jobs.filter((j) => {
     const matchesFilter =
       filter === "All"       ? true :
-      filter === "Active"    ? ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS"].includes(j.status) :
+      filter === "Active"    ? ACTIVE_STATUSES.includes(j.status) :
       filter === "Pending"   ? j.status === "PENDING" :
       filter === "Completed" ? j.status === "DONE" :
       filter === "Cancelled" ? j.status === "CANCELLED" :
@@ -255,7 +196,7 @@ export default function MechanicJobsView({
     return matchesFilter && matchesSearch;
   });
 
-  const activeCount  = jobs.filter((j) => ["CONFIRMED","EN_ROUTE","IN_PROGRESS"].includes(j.status)).length;
+  const activeCount  = jobs.filter((j) => ACTIVE_STATUSES.includes(j.status)).length;
   const pendingCount = jobs.filter((j) => j.status === "PENDING").length;
 
   return (
@@ -286,7 +227,7 @@ export default function MechanicJobsView({
             </svg>
           </button>
           <div className="flex-1">
-            <h1 className="text-lg font-bold text-zinc-100">My Jobs</h1>
+            <h1 className="text-lg font-bold text-zinc-100">Shop Jobs</h1>
             <p className="text-xs text-zinc-500">{jobs.length} total bookings</p>
           </div>
           {activeCount > 0 && (

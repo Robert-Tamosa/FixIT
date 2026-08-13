@@ -16,13 +16,18 @@ export default async function OwnerTrackingPage({ params }: Props) {
     where: {
       id: bookingId,
       ownerId: session.user.id,
-      // Tracking only makes sense once the job is actually moving — same
-      // status set the mechanic-side page allows, so both sides agree on
-      // when this view is valid.
-      status: { in: ["CONFIRMED", "EN_ROUTE", "IN_PROGRESS", "DONE"] },
+      // ESTIMATE_ACCEPTED, not CONFIRMED, is the real "travel/tracking
+      // relevant" state now that the estimate step exists — CONFIRMED just
+      // means "accepted the request, hasn't sent a price yet." Shop
+      // bookings also skip EN_ROUTE entirely (customer brings the vehicle
+      // to the shop, nobody travels to them), going straight
+      // ESTIMATE_ACCEPTED -> IN_PROGRESS -> DONE — this filter needs to
+      // match that path too, not just the mechanic-travel path.
+      status: { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS", "DONE"] },
     },
     include: {
       mechanic: { select: { name: true } },
+      shop:     { select: { name: true } },
       vehicle:  { select: { brand: true, model: true } },
     },
   });
@@ -31,9 +36,10 @@ export default async function OwnerTrackingPage({ params }: Props) {
 
   const props: OwnerTrackingProps = {
     bookingId:       booking.id,
-    // mechanicId can be null for shop-assigned bookings the shop hasn't
-    // picked a specific mechanic for yet — don't crash, show a placeholder.
-    mechanicName:    booking.mechanic?.name ?? "Mechanic (not yet assigned)",
+    // mechanicId is always null for shop bookings now (no assignment step
+    // exists) — show the shop's name instead of a mechanic placeholder,
+    // since there genuinely isn't a specific person to name.
+    mechanicName:    booking.mechanic?.name ?? booking.shop?.name ?? "Mechanic",
     vehicleLabel:    `${booking.vehicle.brand} ${booking.vehicle.model}`,
     status:          booking.status,
     initialOwnerLat: booking.ownerLat ?? null,

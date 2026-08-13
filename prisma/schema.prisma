@@ -29,6 +29,22 @@ enum PaymentStatus {
   PAID
 }
 
+enum PaymentMethod {
+  CASH
+  ONLINE
+}
+
+// Distinct from PaymentStatus (above, used by Invoice) — Invoice only ever
+// needs UNPAID/PAID, but a Payment attempt itself can be PENDING (owner
+// chose a method, hasn't completed it) or FAILED (online charge declined),
+// states Invoice never needs to represent on its own.
+enum PaymentTxnStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+
 enum BookingStatus {
   PENDING             // owner submitted the booking request
   DECLINED            // mechanic declined — owner must choose another mechanic
@@ -44,6 +60,13 @@ enum BookingStatus {
 enum BookingType {
   SCHEDULED    // owner manually picks a mechanic (existing flow)
   EMERGENCY    // system auto-assigns from ranked candidates
+}
+
+enum DocumentStatus {
+  PENDING     // photo captured, extraction in flight
+  EXTRACTED   // model returned fields — waiting on owner to confirm/edit
+  CONFIRMED   // owner confirmed — fields are now trusted, copied onto Vehicle
+  FAILED      // extraction errored out (bad photo, model/API failure, etc.)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,6 +156,10 @@ model User {
   ratingsReceived    MechanicRating[]  @relation("ReceivedRatings")  // NEW
   shopOwned          RepairShop?       @relation("ShopOwner")
   shopRatingsGiven   ShopRating[]      @relation("ShopRatingsGiven")
+  paymentsConfirmed  Payment[]         @relation("PaymentConfirmedBy")
+  vehicleDocumentsUploaded  VehicleDocument[]  @relation("VehicleDocumentsUploaded")
+  inspectionFlagsOwned      InspectionFlag[]   @relation("InspectionFlagsOwned")
+  inspectionFlagsReviewed   InspectionFlag[]   @relation("InspectionFlagsReviewed")
 }
 
 model MechanicProfile {
@@ -179,6 +206,8 @@ model Vehicle {
   // Relations
   bookings     Booking[]
   owner        User      @relation("UserVehicles", fields: [ownerId], references: [id])
+  documents    VehicleDocument[]
+  inspectionFlags   InspectionFlag[]
 }
 
 model Booking {
@@ -213,6 +242,8 @@ model Booking {
   shop               RepairShop?    @relation(fields: [shopId], references: [id])
   estimate           CostEstimate?
   invoice            Invoice?
+  payment            Payment?
+  inspectionFlags   InspectionFlag[]
 }
 
 // NEW — owner rates a mechanic after a booking is completed
@@ -328,6 +359,38 @@ model InvoiceItem {
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 }
 
+// Sits alongside Invoice rather than inside it — Invoice.paymentStatus stays
+// the simple UNPAID/PAID flag the existing UI already reads; Payment tracks
+// the actual attempt (method chosen, PayMongo source, cash confirmation).
+// No direct FK to Invoice — bookingId already gives a 1:1 path to the
+// invoice via Booking.invoice, so this just relates to Booking directly.
+model Payment {
+  id        String  @id @default(cuid())
+  bookingId String  @unique
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
+  amount Decimal           @db.Decimal(10, 2) // copied from Invoice.totalAmount when the method is chosen
+  method PaymentMethod?                        // null until the owner picks one
+  status PaymentTxnStatus  @default(PENDING)
+
+  // --- ONLINE (PayMongo) fields — populated only when method = ONLINE ---
+  providerSourceId String? @unique // PayMongo Source id, e.g. "src_xxx"
+  checkoutUrl       String?
+  paidVia           String?        // "gcash" | "maya"
+  failureReason     String?
+
+  // --- CASH fields — populated only when method = CASH ---
+  confirmedById   String?
+  confirmedBy     User?     @relation("PaymentConfirmedBy", fields: [confirmedById], references: [id])
+  cashConfirmedAt DateTime?
+
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([status])
+}
+
 model Message {
   id        String    @id @default(cuid())
   bookingId String
@@ -353,4 +416,88 @@ model Notification {
   createdAt DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+model VehicleDocument {
+  id           String   @id @default(cuid())
+  vehicleId    String?
+  vehicle      Vehicle? @relation(fields: [vehicleId], references: [id])
+  uploadedById String
+  uploadedBy   User     @relation("VehicleDocumentsUploaded", fields: [uploadedById], references: [id])
+
+  // Pragmatic MVP choice, flagged explicitly: the photo is stored as a
+  // base64 data URI directly in this column, not in a separate object-storage
+  // service. Zero setup, works today, fits the project's existing
+  // "working code over architectural purity" preference. Swap for a real
+  // storage service (Cloudinary/Supabase/Vercel Blob free tiers all exist)
+  // before this sees real volume — data URIs bloat the DB and every
+  // `select *` on this table gets expensive fast. The field is just named
+  // `image` (not `imageDataUri`) so that swap doesn't need a schema change,
+  // just a different string going into the same column.
+  image        String   @db.Text
+
+  // Extracted fields — every one nullable because the model is instructed
+  // to return null rather than guess when it isn't confident (per spec).
+  plateNumber   String?
+  mvFileNumber  String?
+  engineNumber  String?
+  chassisNumber String?
+  make          String?
+  series        String?
+  bodyType      String?
+  color         String?
+  yearModel     String?
+  grossWeight   String?
+  ownerName     String?
+
+  confidence   Float?  // overall 0–1 confidence reported by the model
+  rawResponse  Json?   // full model output kept for debugging/re-parsing
+
+  status      DocumentStatus @default(PENDING)
+  confirmedAt DateTime?
+  failReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, createdAt])
+}
+
+model InspectionFlag {
+  id        String   @id @default(cuid())
+  vehicleId String?
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id])
+  ownerId   String
+  owner     User     @relation("InspectionFlagsOwned", fields: [ownerId], references: [id])
+
+  // Optional — set when the scan happens from within an active booking's
+  // context (narrows who's authorized to review, see inspection.ts). Null
+  // for a freeform AI-chat scan not tied to any booking yet.
+  bookingId String?
+  booking   Booking? @relation(fields: [bookingId], references: [id])
+
+  image String @db.Text // same pragmatic base64-in-column choice as VehicleDocument.image
+
+  issueType   String  // "dent" | "rust" | "cracked_part" | "tire_wear" | "fluid_leak" — free-text, not an enum, since the model may surface a category not yet anticipated
+  description String
+  confidence  Float
+  severity    String? // "minor" | "moderate" | "needs_attention" — model may omit
+
+  rawResponse Json?
+
+  // Nothing becomes a "confirmed issue" until a human mechanic signs off —
+  // per spec, this is a triage aid, never shown to the owner as a diagnosis.
+  mechanicReviewed  Boolean   @default(false)
+  mechanicConfirmed Boolean?  // null = not reviewed yet
+  reviewedById      String?
+  reviewedBy        User?     @relation("InspectionFlagsReviewed", fields: [reviewedById], references: [id])
+  reviewedAt        DateTime?
+  reviewNotes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vehicleId, createdAt])
+  @@index([ownerId, createdAt])
+  @@index([mechanicReviewed])
 }

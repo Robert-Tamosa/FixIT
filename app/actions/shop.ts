@@ -30,12 +30,6 @@ export interface ShopInput {
   services: string[];
 }
 
-/**
- * Creates a shop owned by the current user. The user must have the SHOP_OWNER
- * role (a business-only account — it does not have a MechanicProfile and does
- * not perform repairs itself). Starts unverified, pending admin approval,
- * mirroring the existing mechanic verification flow.
- */
 export async function createShop(input: ShopInput) {
   const user = await requireUser();
   if (user.role !== "SHOP_OWNER") {
@@ -45,9 +39,6 @@ export async function createShop(input: ShopInput) {
   const existing = await prisma.repairShop.findUnique({ where: { ownerId: user.id } });
   if (existing) throw new Error("You already own a shop");
 
-  // Geocode the typed address rather than relying on the registrant's browser
-  // location — a shop's coordinates should match its physical address, not
-  // wherever the owner happens to be filling out the form.
   const geocoded = input.latitude && input.longitude
     ? { lat: input.latitude, lng: input.longitude }
     : await geocodeAddress(input.address);
@@ -71,7 +62,6 @@ export async function createShop(input: ShopInput) {
   return { success: true, shopId: shop.id, geocoded: geocoded !== null };
 }
 
-/** Updates shop business info. Owner only. */
 export async function updateShop(shopId: string, input: Partial<ShopInput>) {
   const user = await requireUser();
   const shop = await prisma.repairShop.findUnique({ where: { id: shopId } });
@@ -83,13 +73,6 @@ export async function updateShop(shopId: string, input: Partial<ShopInput>) {
   return { success: true };
 }
 
-/**
- * Adds an existing independent mechanic to a shop, or removes them (shopId = null).
- * The shop's owner (SHOP_OWNER) or an admin can assign/remove any mechanic.
- * A mechanic may also remove themself from their current shop (self-service exit),
- * but cannot add themself to a shop unilaterally — that requires the shop owner's
- * action so shops control their own roster.
- */
 export async function setMechanicShop(mechanicUserId: string, shopId: string | null) {
   const user = await requireUser();
 
@@ -147,7 +130,6 @@ export interface DisplayShopProfile {
   mechanics: DisplayShopMechanic[];
 }
 
-/** Public shop profile: business info, services, hours, and roster of mechanics. */
 export async function getShopProfile(shopId: string): Promise<DisplayShopProfile | null> {
   const shop = await prisma.repairShop.findUnique({
     where: { id: shopId },
@@ -204,7 +186,6 @@ export async function getShopProfile(shopId: string): Promise<DisplayShopProfile
   };
 }
 
-/** Admin approves a pending shop registration, mirroring mechanic verification. */
 export async function approveShop(shopId: string) {
   const user = await requireUser();
   if (user.role !== "ADMIN") throw new Error("Admin only");
@@ -219,7 +200,6 @@ export async function approveShop(shopId: string) {
   return { success: true };
 }
 
-/** Admin rejects a pending shop registration. */
 export async function rejectShop(shopId: string, reason?: string) {
   const user = await requireUser();
   if (user.role !== "ADMIN") throw new Error("Admin only");
@@ -248,7 +228,6 @@ export interface DisplayPendingShop {
   createdAt: string;
 }
 
-/** Admin-only: queue of shops awaiting verification. */
 export async function getPendingShops(): Promise<DisplayPendingShop[]> {
   const user = await requireUser();
   if (user.role !== "ADMIN") throw new Error("Admin only");
@@ -270,7 +249,6 @@ export async function getPendingShops(): Promise<DisplayPendingShop[]> {
   }));
 }
 
-/** Returns the current SHOP_OWNER's own shop, or null if they haven't registered one yet. */
 export async function getMyShop(): Promise<DisplayShopProfile | null> {
   const user = await requireUser();
   if (user.role !== "SHOP_OWNER") throw new Error("Shop-owner accounts only");
@@ -281,11 +259,16 @@ export async function getMyShop(): Promise<DisplayShopProfile | null> {
 }
 
 /**
- * One-time GPS location share for a shop owner physically standing at their
- * shop. This is the preferred, accurate source of truth for shop coordinates —
- * geocoding the typed address is only a fallback for shops that skip this.
+ * One-time-feeling GPS location share for a shop owner physically standing
+ * at their shop — mirrors the owner's saveHomeLocation pattern. Now also
+ * updates `address` (reverse-geocoded), not just latitude/longitude — the
+ * previous version only touched coordinates, so the dashboard's displayed
+ * address stayed frozen at whatever was set (or geocoded) at signup, even
+ * as the actual GPS location changed. That mismatch was the bug: distance/
+ * geofence math was correct the whole time (it uses lat/lng), but the text
+ * shown on screen never caught up.
  */
-export async function shareShopLocation(latitude: number, longitude: number) {
+export async function shareShopLocation(latitude: number, longitude: number, address?: string) {
   const user = await requireUser();
   if (user.role !== "SHOP_OWNER") throw new Error("Shop-owner accounts only");
 
@@ -294,13 +277,58 @@ export async function shareShopLocation(latitude: number, longitude: number) {
 
   await prisma.repairShop.update({
     where: { id: shop.id },
-    data: { latitude, longitude },
+    data: {
+      latitude,
+      longitude,
+      ...(address ? { address } : {}),
+    },
   });
 
   revalidatePath("/dashboard/shop");
   return { success: true };
 }
 
+// ── Sentiment analysis via Gemini ────────────────────────────────────────────
+// Duplicated from submit-rating.ts rather than shared — each actions file in
+// this project stays self-contained, matching the existing pattern (e.g.
+// requireUser()/requireShopOwner() are separately defined per-file too,
+// not imported from one shared auth-helpers module).
+
+async function analyzeSentiment(comment: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: "Classify the sentiment of this shop review as exactly one word: POSITIVE, NEUTRAL, or NEGATIVE. Reply with only that word, nothing else." }],
+          },
+          contents: [{ role: "user", parts: [{ text: comment }] }],
+          generationConfig: { maxOutputTokens: 5, temperature: 0 },
+        }),
+      }
+    );
+    const data = await res.json();
+    const word = (data.candidates?.[0]?.content?.parts?.[0]?.text ?? "")
+      .trim()
+      .toUpperCase();
+    if (["POSITIVE", "NEUTRAL", "NEGATIVE"].includes(word)) return word;
+    return "NEUTRAL";
+  } catch {
+    return "NEUTRAL";
+  }
+}
+
+/**
+ * Direct shop-rating entry point (separate from submit-rating.ts's
+ * submitRating(), which branches between MechanicRating/ShopRating based on
+ * the booking). Now runs the same sentiment analysis submit-rating.ts's
+ * mechanic-rating path already did — previously this always fell back to
+ * ShopRating's schema default ("NEUTRAL") regardless of what the comment
+ * actually said, since nothing here ever computed a real value.
+ */
 export async function rateShop(bookingId: string, shopId: string, rating: number, comment?: string) {
   const user = await requireUser();
   if (user.role !== "OWNER") throw new Error("Only owners can rate shops");
@@ -310,8 +338,10 @@ export async function rateShop(bookingId: string, shopId: string, rating: number
   if (!booking || booking.ownerId !== user.id) throw new Error("Booking not found");
   if (booking.status !== "DONE") throw new Error("Can only rate after the job is done");
 
+  const sentiment = comment ? await analyzeSentiment(comment) : "NEUTRAL";
+
   await prisma.shopRating.create({
-    data: { shopId, ownerId: user.id, bookingId, rating, comment },
+    data: { shopId, ownerId: user.id, bookingId, rating, comment, sentiment },
   });
 
   revalidatePath(`/shops/${shopId}`);

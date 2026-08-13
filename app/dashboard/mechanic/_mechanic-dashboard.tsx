@@ -1092,19 +1092,18 @@ function ActiveJobCard({
 
       {/* Action buttons */}
       <div className="flex gap-2">
-        {/* Call client */}
+        {/* message client */}
         <button
-          aria-label="Call client"
-          className="w-11 h-11 rounded-xl bg-white/[0.04] border border-white/[0.08]
-            flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
+          aria-label="Message Client"
+          className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
           <svg
-            width="15"
-            height="15"
+            width="20"
+            height="20"
             viewBox="0 0 24 24"
             fill="none"
             aria-hidden="true">
             <path
-              d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.63 3.4 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 8.9a16 16 0 0 0 6 6l.95-.96a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+              d="M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z"
               stroke="#71717A"
               strokeWidth="1.5"
               strokeLinecap="round"

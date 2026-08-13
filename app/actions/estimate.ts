@@ -18,6 +18,34 @@ async function requireUser() {
   return dbUser;
 }
 
+/**
+ * Resolves whether the current user may act on this booking's estimate —
+ * either the assigned mechanic, or the owner of the shop this booking
+ * belongs to (shops handle estimates as a business now, independent of
+ * whether a specific mechanic has been assigned yet — see
+ * shop-dashboard.ts's acceptShopBooking/assignMechanicToBooking for the
+ * rest of that flow). A booking can only have one or the other as its
+ * "handler" in practice (mechanicId set vs shopId set), but this checks
+ * both so it doesn't need to know which case it's in ahead of time.
+ */
+async function resolveEstimateAccess(
+  booking: { mechanicId: string | null; shopId: string | null },
+  user: { id: string; role: string },
+): Promise<{ isMechanic: boolean; isShopOwner: boolean }> {
+  const isMechanic = user.role === "MECHANIC" && booking.mechanicId === user.id;
+
+  let isShopOwner = false;
+  if (user.role === "SHOP_OWNER" && booking.shopId) {
+    const shop = await prisma.repairShop.findUnique({
+      where: { id: booking.shopId },
+      select: { ownerId: true },
+    });
+    isShopOwner = shop?.ownerId === user.id;
+  }
+
+  return { isMechanic, isShopOwner };
+}
+
 export interface EstimateInput {
   bookingId: string;
   laborCost: number;
@@ -26,18 +54,23 @@ export interface EstimateInput {
 }
 
 /**
- * Mechanic creates the cost estimate for a CONFIRMED booking.
- * Booking → ESTIMATE_SENT.
+ * Creates the cost estimate for a CONFIRMED booking. Booking -> ESTIMATE_SENT.
+ * Either the assigned mechanic OR the shop owner (for shop bookings, with or
+ * without a mechanic assigned yet) can do this now.
  */
 export async function createEstimate(input: EstimateInput) {
   const user = await requireUser();
-  if (user.role !== "MECHANIC") throw new Error("Only mechanics can create estimates");
 
   const booking = await prisma.booking.findUnique({
     where: { id: input.bookingId },
     include: { vehicle: { select: { brand: true, model: true } } },
   });
-  if (!booking || booking.mechanicId !== user.id) throw new Error("Booking not found");
+  if (!booking) throw new Error("Booking not found");
+
+  const { isMechanic, isShopOwner } = await resolveEstimateAccess(booking, user);
+  if (!isMechanic && !isShopOwner) {
+    throw new Error("Not authorized to create an estimate for this booking");
+  }
   if (booking.status !== "CONFIRMED") {
     throw new Error("Booking must be confirmed before sending an estimate");
   }
@@ -69,13 +102,15 @@ export async function createEstimate(input: EstimateInput) {
   });
 
   revalidatePath("/dashboard/mechanic");
+  revalidatePath("/dashboard/shop");
   revalidatePath("/dashboard/owner");
   return { success: true };
 }
 
 /**
- * Mechanic (before completion) or admin edits an existing estimate.
- * Does not change booking status — owner re-reviews the same ESTIMATE_SENT state.
+ * Edits an existing estimate. Mechanic (if assigned), shop owner (if a shop
+ * booking), or admin — before completion/cancellation. Does not change
+ * booking status — owner re-reviews the same ESTIMATE_SENT state.
  */
 export async function editEstimate(input: EstimateInput) {
   const user = await requireUser();
@@ -83,9 +118,9 @@ export async function editEstimate(input: EstimateInput) {
   const booking = await prisma.booking.findUnique({ where: { id: input.bookingId } });
   if (!booking) throw new Error("Booking not found");
 
-  const isOwnerMechanic = user.role === "MECHANIC" && booking.mechanicId === user.id;
+  const { isMechanic, isShopOwner } = await resolveEstimateAccess(booking, user);
   const isAdmin = user.role === "ADMIN";
-  if (!isOwnerMechanic && !isAdmin) throw new Error("Not authorized to edit this estimate");
+  if (!isMechanic && !isShopOwner && !isAdmin) throw new Error("Not authorized to edit this estimate");
   if (booking.status === "DONE" || booking.status === "CANCELLED") {
     throw new Error("Cannot edit an estimate after the job is completed or cancelled");
   }
@@ -112,14 +147,16 @@ export async function editEstimate(input: EstimateInput) {
   }
 
   revalidatePath("/dashboard/mechanic");
+  revalidatePath("/dashboard/shop");
   revalidatePath("/dashboard/owner");
   revalidatePath("/dashboard/admin/invoices");
   return { success: true };
 }
 
 /**
- * Owner accepts the estimate → booking moves to ESTIMATE_ACCEPTED,
- * unlocking the mechanic's "Start Travel" step.
+ * Owner accepts the estimate -> booking moves to ESTIMATE_ACCEPTED,
+ * unlocking the mechanic's "Start Travel" step (once a mechanic is
+ * assigned, for shop bookings that accepted before assigning).
  */
 export async function acceptEstimate(bookingId: string) {
   const user = await requireUser();
@@ -155,13 +192,12 @@ export async function acceptEstimate(bookingId: string) {
 
   revalidatePath("/dashboard/owner");
   revalidatePath("/dashboard/mechanic");
+  revalidatePath("/dashboard/shop");
   return { success: true };
 }
 
 /**
- * Owner declines the estimate → booking moves to CANCELLED, matching the
- * "Decline → Booking Cancelled" branch of the flow (mirrors acceptEstimate
- * above, which only handles the Accept branch).
+ * Owner declines the estimate -> booking moves to CANCELLED.
  */
 export async function declineEstimate(bookingId: string) {
   const user = await requireUser();
@@ -191,6 +227,7 @@ export async function declineEstimate(bookingId: string) {
 
   revalidatePath("/dashboard/owner");
   revalidatePath("/dashboard/mechanic");
+  revalidatePath("/dashboard/shop");
   return { success: true };
 }
 
@@ -204,7 +241,7 @@ export interface DisplayEstimate {
   acceptedAt: string | null;
 }
 
-/** Fetches the estimate for a booking, scoped to owner/mechanic (own bookings) or admin. */
+/** Fetches the estimate for a booking, scoped to owner/mechanic/shop owner (own bookings) or admin. */
 export async function getEstimate(bookingId: string): Promise<DisplayEstimate | null> {
   const user = await requireUser();
 
@@ -212,9 +249,9 @@ export async function getEstimate(bookingId: string): Promise<DisplayEstimate | 
   if (!booking) throw new Error("Booking not found");
 
   const isOwner = user.role === "OWNER" && booking.ownerId === user.id;
-  const isMechanic = user.role === "MECHANIC" && booking.mechanicId === user.id;
+  const { isMechanic, isShopOwner } = await resolveEstimateAccess(booking, user);
   const isAdmin = user.role === "ADMIN";
-  if (!isOwner && !isMechanic && !isAdmin) throw new Error("Not authorized");
+  if (!isOwner && !isMechanic && !isShopOwner && !isAdmin) throw new Error("Not authorized");
 
   const estimate = await prisma.costEstimate.findUnique({ where: { bookingId } });
   if (!estimate) return null;

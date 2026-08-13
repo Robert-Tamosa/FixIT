@@ -21,9 +21,11 @@ interface BookingModalProps {
 // (hard-blocked against that mechanic's existing schedule) → 5 Share Location
 // (home / mechanic-shop's location / current) → 6 Review & Confirm.
 //
-// Mechanic/shop selection was deliberately moved BEFORE date & time so slot
-// conflict-checking has something to check against, and before location so
-// "use the mechanic/shop's location" has an actual address to offer.
+// NOTE: Step 5 is skipped entirely when a SHOP is chosen — the location is
+// automatically the shop's own address (bring the vehicle there), no owner
+// input needed. It's only shown when a specific MECHANIC is chosen, where
+// "where do I meet them" is a real choice (home / mechanic's current spot /
+// somewhere else). Step numbering/progress bar below account for this.
 
 const STEP_TITLES = [
   "Select your vehicle",
@@ -85,6 +87,7 @@ export function BookingModal({
   const [scheduledAt, setScheduledAt] = useState(""); // ISO string of the chosen slot
 
   // Step 5: location — home / mechanic-shop's location / current
+  // (skipped entirely for shop bookings — see isShopFlow below)
   const [location, setLocation] = useState<CapturedLocation | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
@@ -97,6 +100,13 @@ export function BookingModal({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const isShopFlow = !!shopId;
+  // Displayed step numbering collapses out step 5 for shop bookings, since
+  // it's never actually shown — internal `step` still uses 1-6 positions
+  // matching the JSX blocks below, just skipping over 5 in navigation.
+  const totalStepsDisplay = isShopFlow ? TOTAL_STEPS - 1 : TOTAL_STEPS;
+  const stepDisplay = isShopFlow && step > 5 ? step - 1 : step;
 
   // ── Load vehicles + home location fresh every time the modal opens ─────────
   useEffect(() => {
@@ -131,11 +141,13 @@ export function BookingModal({
       .then(setSlots)
       .catch(() => setSlots([]))
       .finally(() => setSlotsLoading(false));
-    // Changing the date invalidates whatever slot was previously chosen.
     setScheduledAt("");
   }, [date, mechanicId]);
 
-  // ── Fetch the mechanic/shop's location once step 5 is reached ──────────────
+  // ── Fetch the mechanic/shop's location as soon as one is chosen ────────────
+  // Moved off "step === 5 only" — for shop bookings step 5 never renders at
+  // all, but we still need targetLocation ready by the time step 4 tries to
+  // auto-apply it when skipping ahead to step 6.
   const loadTargetLocation = useCallback(async () => {
     setTargetLocationLoading(true);
     try {
@@ -156,6 +168,8 @@ export function BookingModal({
         } else {
           setTargetLocation(null);
         }
+      } else {
+        setTargetLocation(null);
       }
     } finally {
       setTargetLocationLoading(false);
@@ -163,9 +177,9 @@ export function BookingModal({
   }, [mechanicId, shopId, mechanics, shops]);
 
   useEffect(() => {
-    if (!isOpen || step !== 5) return;
+    if (!isOpen || (!mechanicId && !shopId)) return;
     loadTargetLocation();
-  }, [isOpen, step, loadTargetLocation]);
+  }, [isOpen, mechanicId, shopId, loadTargetLocation]);
 
   if (!isOpen) return null;
 
@@ -241,9 +255,25 @@ export function BookingModal({
       setError("Select a mechanic or a shop.");
       return;
     }
-    if (step === 4 && !scheduledAt) {
-      setError("Pick an available date & time.");
-      return;
+    if (step === 4) {
+      if (!scheduledAt) {
+        setError("Pick an available date & time.");
+        return;
+      }
+      if (isShopFlow) {
+        // Skip step 5 entirely — auto-apply the shop's own location instead
+        // of asking the owner to choose. If we don't actually have the
+        // shop's coordinates for some reason (never geocoded/shared), don't
+        // silently proceed with no location — block with a clear message
+        // rather than letting the booking submit incomplete.
+        if (!targetLocation) {
+          setError("Could not determine this shop's location. Please try again in a moment, or choose a different shop.");
+          return;
+        }
+        setLocation(targetLocation);
+        setStep(6);
+        return;
+      }
     }
     if (step === 5 && !location) {
       setError("Please choose a location.");
@@ -254,6 +284,11 @@ export function BookingModal({
 
   function back() {
     setError("");
+    if (step === 6 && isShopFlow) {
+      // Skip step 5 on the way back too — it never rendered going forward.
+      setStep(4);
+      return;
+    }
     setStep((s) => s - 1);
   }
 
@@ -272,7 +307,7 @@ export function BookingModal({
         address: location!.address,
       });
 
-      if (saveAsHome && location) {
+      if (saveAsHome && location && !isShopFlow) {
         await saveHomeLocation(location.lat, location.lng, location.address).catch(() => {});
       }
 
@@ -331,7 +366,7 @@ export function BookingModal({
           <div className="flex items-center justify-between mb-5">
             <div>
               <p className="text-[11px] text-zinc-500 mb-0.5 uppercase tracking-wider font-medium">
-                Step {step} of {TOTAL_STEPS}
+                Step {stepDisplay} of {totalStepsDisplay}
               </p>
               <h2 className="text-[18px] font-bold text-zinc-100 leading-tight">
                 {STEP_TITLES[step - 1]}
@@ -350,12 +385,12 @@ export function BookingModal({
 
           {/* ── Progress bar ── */}
           <div className="flex gap-1.5 mb-6">
-            {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
+            {Array.from({ length: totalStepsDisplay }, (_, i) => i + 1).map((s) => (
               <div
                 key={s}
                 className={[
                   "h-1 flex-1 rounded-full transition-all duration-300",
-                  s <= step ? "bg-amber-400" : "bg-white/[0.08]",
+                  s <= stepDisplay ? "bg-amber-400" : "bg-white/[0.08]",
                 ].join(" ")}
               />
             ))}
@@ -575,6 +610,7 @@ export function BookingModal({
                   </svg>
                   <p className="text-xs text-zinc-500">
                     Shop time slots aren't checked against individual mechanic schedules yet — all times shown as open.
+                    Bring your vehicle to {selectedShop?.name ?? "the shop"} — no location step needed.
                   </p>
                 </div>
               )}
@@ -617,8 +653,11 @@ export function BookingModal({
             </div>
           )}
 
-          {/* ── Step 5: Location — home / mechanic-shop's location / current ── */}
-          {step === 5 && (
+          {/* ── Step 5: Location — home / mechanic's location / current ──
+              Never rendered for shop bookings — see next()'s step 4 handler,
+              which auto-applies the shop's location and jumps straight to
+              step 6 instead. */}
+          {step === 5 && !isShopFlow && (
             <div className="space-y-2.5">
               {/* Home */}
               {homeLoading ? (
@@ -648,7 +687,7 @@ export function BookingModal({
                 </button>
               ) : null}
 
-              {/* Mechanic / shop's location */}
+              {/* Mechanic's location */}
               {targetLocationLoading ? (
                 <div className="flex items-center justify-center py-4">
                   <span className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-amber-400 animate-spin" />
@@ -746,7 +785,12 @@ export function BookingModal({
                         })
                       : "—",
                   },
-                  { label: "Location", value: location?.address ?? "—" },
+                  {
+                    label: "Location",
+                    value: isShopFlow
+                      ? `${location?.address ?? "—"} (shop location)`
+                      : (location?.address ?? "—"),
+                  },
                 ].map(({ label, value }) => (
                   <div key={label} className="flex items-start gap-3">
                     <span className="text-xs text-zinc-500 w-16 shrink-0 pt-0.5">{label}</span>
@@ -761,7 +805,7 @@ export function BookingModal({
                   <path d="M12 8v4M12 16h.01" stroke="#71717A" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
                 <p className="text-xs text-zinc-500">
-                  This sends a request — the mechanic reviews it and sends a repair estimate before anything is confirmed.
+                  This sends a request — {isShopFlow ? "the shop" : "the mechanic"} reviews it and sends a repair estimate before anything is confirmed.
                 </p>
               </div>
             </div>

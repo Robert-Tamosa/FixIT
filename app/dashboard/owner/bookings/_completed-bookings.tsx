@@ -5,6 +5,7 @@ import { RatingModal } from "./RatingModal";
 import { BottomNav } from "@/components/BottomNav";
 import { useRouter } from "next/navigation";
 import { getInvoice, type DisplayInvoice } from "@/app/actions/invoice";
+import { PaymentMethodCard } from "@/components/payment/PaymentMethodCard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -240,8 +241,10 @@ function InvoiceViewModal({
               <p className="text-[11px] text-zinc-600 text-center">
                 Generated {new Date(invoice.generatedAt).toLocaleDateString("en-PH", {
                   month: "short", day: "numeric", year: "numeric",
-                })} · Payment is collected in cash at time of service
+                })}
               </p>
+
+              <PaymentMethodCard bookingId={bookingId} />
             </div>
           )}
         </div>
