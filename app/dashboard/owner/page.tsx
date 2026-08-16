@@ -15,6 +15,42 @@ function getInitials(name: string | null): string {
   return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 }
 
+// Shared shape/select for turning a raw booking + relations into a
+// DisplayBooking — used by the active/pending queries below AND the new
+// done-unpaid one, so all three stay in sync if a field changes.
+function toDisplayBooking(
+  b: {
+    id: string;
+    mechanicId: string | null;
+    problemDescription: string;
+    status: string;
+    scheduledAt: Date | null;
+    price: unknown;
+    mechanic: { name: string | null } | null;
+    shop: { name: string } | null;
+    vehicle: { brand: string; model: string };
+  },
+  ratingMap: Map<string, number>,
+): DisplayBooking {
+  return {
+    id:               b.id,
+    mechanicName:     b.mechanic?.name ?? "Unknown Mechanic",
+    mechanicInitials: getInitials(b.mechanic?.name ?? null),
+    mechanicRating:   Math.round((ratingMap.get(b.mechanicId ?? "") ?? 0) * 10) / 10,
+    ShopName:         b.shop?.name ?? "",
+    service:          b.problemDescription,
+    status:           b.status as DisplayBooking["status"],
+    scheduledAt:      b.scheduledAt
+      ? b.scheduledAt.toLocaleDateString("en-PH", {
+          month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit",
+        })
+      : null,
+    price:            b.price ? `₱${Number(b.price).toLocaleString()}` : "TBD",
+    vehicleLabel:     `${b.vehicle.brand} ${b.vehicle.model}`,
+  };
+}
+
 export default async function OwnerDashboardPage() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/signIn");
@@ -76,6 +112,28 @@ export default async function OwnerDashboardPage() {
       }
     : null;
 
+  // ── 1d. Done, but not yet paid — NEW. Kept separate from the priority slot
+  //        above (active/pending/estimateReview stay a single "current
+  //        booking" ternary, unchanged) since an owner could plausibly have
+  //        several vehicles each in a different done-unpaid state at once,
+  //        not just one. findMany, not findFirst — deliberately.
+  const rawDoneUnpaid = await prisma.booking.findMany({
+    where: {
+      ownerId: session.user.id,
+      status:  "DONE",
+      OR: [
+        { payment: null },
+        { payment: { status: { not: "PAID" } } },
+      ],
+    },
+    include: {
+      mechanic: { select: { id: true, name: true } },
+      shop:     { select: { name: true } },
+      vehicle:  { select: { brand: true, model: true, plateNumber: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
   // ── 2. Mechanics list ──────────────────────────────────────────────────────
   const rawMechanics = await prisma.user.findMany({
     where: { role: "MECHANIC" },
@@ -114,30 +172,7 @@ export default async function OwnerDashboardPage() {
   // ── Transform → display types ──────────────────────────────────────────────
 
   const activeBooking: DisplayBooking | null = rawBooking
-    ? {
-        id:               rawBooking.id,
-        mechanicName:     rawBooking.mechanic?.name ?? "Unknown Mechanic",
-        mechanicInitials: getInitials(rawBooking.mechanic?.name ?? null),
-        mechanicRating:   Math.round((ratingMap.get(rawBooking.mechanicId ?? "") ?? 0) * 10) / 10,
-        // Only populated for shop bookings — mechanicId stays null for
-        // those (no assignment step exists anymore), so this is what tells
-        // ActiveBookingCard which progress-bar/name to show. Was never set
-        // before, which is why the EN_ROUTE step kept showing for shop
-        // bookings despite the isShopBooking branch existing in the UI.
-        ShopName:         rawBooking.shop?.name ?? "",
-        service:          rawBooking.problemDescription,
-        status:           rawBooking.status as DisplayBooking["status"],
-        scheduledAt:      rawBooking.scheduledAt
-          ? rawBooking.scheduledAt.toLocaleDateString("en-PH", {
-              month: "short", day: "numeric",
-              hour: "2-digit", minute: "2-digit",
-            })
-          : null,
-        price:            rawBooking.price
-          ? `₱${Number(rawBooking.price).toLocaleString()}`
-          : "TBD",
-        vehicleLabel:     `${rawBooking.vehicle.brand} ${rawBooking.vehicle.model}`,
-      }
+    ? toDisplayBooking(rawBooking, ratingMap)
     : null;
 
   const mechanics: DisplayMechanic[] = rawMechanics.map((m) => ({
@@ -151,26 +186,10 @@ export default async function OwnerDashboardPage() {
   }));
 
   const pendingDisplay: DisplayBooking | null = pendingBooking
-    ? {
-        id:               pendingBooking.id,
-        mechanicName:     pendingBooking.mechanic?.name ?? "Unknown Mechanic",
-        mechanicInitials: getInitials(pendingBooking.mechanic?.name ?? null),
-        mechanicRating:   Math.round((ratingMap.get(pendingBooking.mechanicId ?? "") ?? 0) * 10) / 10,
-        ShopName:         pendingBooking.shop?.name ?? "",
-        service:          pendingBooking.problemDescription,
-        status:           pendingBooking.status as DisplayBooking["status"],
-        scheduledAt:      pendingBooking.scheduledAt
-          ? pendingBooking.scheduledAt.toLocaleDateString("en-PH", {
-              month: "short", day: "numeric",
-              hour: "2-digit", minute: "2-digit",
-            })
-          : null,
-        price:            pendingBooking.price
-          ? `₱${Number(pendingBooking.price).toLocaleString()}`
-          : "TBD",
-        vehicleLabel:     `${pendingBooking.vehicle.brand} ${pendingBooking.vehicle.model}`,
-      }
+    ? toDisplayBooking(pendingBooking, ratingMap)
     : null;
+
+  const doneUnpaidBookings: DisplayBooking[] = rawDoneUnpaid.map((b) => toDisplayBooking(b, ratingMap));
 
   const user: SessionUser = {
     id:    session.user.id,
@@ -186,6 +205,7 @@ export default async function OwnerDashboardPage() {
       activeBooking={activeBooking}
       pendingBooking={pendingDisplay}
       estimateReview={estimateReview}
+      doneUnpaidBookings={doneUnpaidBookings}
       mechanics={mechanics}
     />
   );

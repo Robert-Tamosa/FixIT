@@ -24,10 +24,23 @@ export type DisplayInspectionFlag = {
   description: string;
   confidence: number;
   severity: string | null;
+  sourceSuspicious: boolean;
+  sourceFlagReasons: string[];
   mechanicReviewed: boolean;
   mechanicConfirmed: boolean | null;
   reviewNotes: string | null;
   createdAt: string;
+};
+
+// What inspectVehicleParts actually returns — flags plus a source-check
+// warning that exists independently of whether any real issue was flagged.
+// Needed because a suspicious-but-damage-free photo (e.g. a clean stock
+// photo with no visible damage) would otherwise lose the warning entirely:
+// zero InspectionFlag rows get created when the model finds no issues, so
+// there'd be nowhere to carry it.
+export type InspectionResult = {
+  flags: DisplayInspectionFlag[];
+  sourceWarning: { suspicious: boolean; reasons: string[] } | null;
 };
 
 function toDisplay(f: any): DisplayInspectionFlag {
@@ -39,6 +52,8 @@ function toDisplay(f: any): DisplayInspectionFlag {
     description: f.description,
     confidence: f.confidence,
     severity: f.severity,
+    sourceSuspicious: f.sourceSuspicious ?? false,
+    sourceFlagReasons: f.sourceFlagReasons ?? [],
     mechanicReviewed: f.mechanicReviewed,
     mechanicConfirmed: f.mechanicConfirmed,
     reviewNotes: f.reviewNotes,
@@ -56,29 +71,45 @@ function toDisplay(f: any): DisplayInspectionFlag {
 // ============================================================
 const TRIAGE_PROMPT = `You are looking at a photo of part of a vehicle (car or motorcycle), submitted by the vehicle owner describing a possible problem.
 
-Your ONLY job is to flag VISUALLY-CONFIRMABLE SURFACE issues that are clearly visible in this specific photo. Examples of what's in scope: dents, scratches, rust, cracked or broken external parts, visibly worn or damaged tires, visible fluid leaks/stains, broken lights or mirrors, damaged bodywork.
+Your ONLY job regarding vehicle issues is to flag VISUALLY-CONFIRMABLE SURFACE issues that are clearly visible in this specific photo. Examples of what's in scope: dents, scratches, rust, cracked or broken external parts, visibly worn or damaged tires, visible fluid leaks/stains, broken lights or mirrors, damaged bodywork.
 
 You must NOT diagnose or guess at internal, mechanical, or electrical problems that aren't directly visible in the photo — no engine issues, no brake problems, no transmission issues, no electrical faults, unless there is a directly visible external sign of it (e.g., a visible fluid leak, not "this might be a brake problem").
 
-If you see no clear, visually-confirmable issue, return an empty array.
+If you see no clear, visually-confirmable issue, return an empty "issues" array.
 
-Respond with ONLY a JSON array, no markdown formatting, no explanation, no preamble — just the raw JSON array. Each element:
+Separately, examine the PHOTO ITSELF (not the vehicle) for visible signs it may not be an original photo the owner actually took — for example:
+- A visible watermark, logo, or caption from a stock-photo site, search engine, or news source
+- Screenshot artifacts: browser chrome, address bar, scrollbar, cropped browser window edges
+- Studio-style staging (showroom backdrop, promotional lighting) inconsistent with a quick phone photo of their own vehicle
+- Visual artifacts sometimes seen in AI-generated images: warped or physically-impossible details, unnaturally smooth or repeating textures, inconsistent lighting/shadow directions
+Only flag what is actually visible. When genuinely uncertain, err toward flagging — a false positive just means a mechanic double-checks in person anyway (which they already do for every flag), while missing an actual reused/downloaded image is the expensive failure.
+
+Respond with ONLY a JSON object, no markdown formatting, no explanation, no preamble:
 
 {
-  "issueType": string,        // short slug, e.g. "dent", "rust", "cracked_part", "tire_wear", "fluid_leak"
-  "description": string,      // one plain-language sentence describing exactly what's visible and where
-  "confidence": number,       // 0.0 to 1.0
-  "severity": "minor" | "moderate" | "needs_attention" | null
+  "issues": [
+    {
+      "issueType": string,        // short slug, e.g. "dent", "rust", "cracked_part", "tire_wear", "fluid_leak"
+      "description": string,      // one plain-language sentence describing exactly what's visible and where
+      "confidence": number,       // 0.0 to 1.0
+      "severity": "minor" | "moderate" | "needs_attention" | null
+    }
+  ],
+  "sourceCheck": {
+    "suspicious": boolean,
+    "reasons": string[]           // specific visible evidence, e.g. "Visible Getty Images watermark" — empty array if nothing suspicious
+  }
 }`;
 
 // ============================================================
 // inspectVehicleParts — run triage on one photo, create one InspectionFlag
-// row per issue found. Returns [] if nothing was flagged (not an error).
+// row per issue found, plus a source-authenticity warning that's returned
+// regardless of whether any issue rows exist (see InspectionResult above).
 // ============================================================
 export async function inspectVehicleParts(
   imageDataUrl: string,
   opts: { vehicleId?: string; bookingId?: string },
-): Promise<DisplayInspectionFlag[]> {
+): Promise<InspectionResult> {
   const user = await requireUser();
   assertReasonableImageSize(imageDataUrl);
 
@@ -97,21 +128,30 @@ export async function inspectVehicleParts(
     if (!booking || booking.ownerId !== user.id) throw new Error("Unauthorized");
   }
 
-  let results: Array<Record<string, unknown>>;
+  let issues: Array<Record<string, unknown>>;
+  let sourceSuspicious = false;
+  let sourceFlagReasons: string[] = [];
   try {
-    const raw = await callGroqVision<unknown>(imageDataUrl, TRIAGE_PROMPT);
-    results = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+    const raw = await callGroqVision<Record<string, unknown>>(imageDataUrl, TRIAGE_PROMPT);
+    issues = Array.isArray(raw.issues) ? (raw.issues as Array<Record<string, unknown>>) : [];
+
+    const sourceCheck = raw.sourceCheck as { suspicious?: boolean; reasons?: unknown } | undefined;
+    sourceSuspicious = sourceCheck?.suspicious === true;
+    sourceFlagReasons = Array.isArray(sourceCheck?.reasons)
+      ? sourceCheck.reasons.filter((r): r is string => typeof r === "string")
+      : [];
   } catch (err) {
-    // Triage failing shouldn't crash the chat — surface as an empty result
-    // with the error visible to the caller via a thrown error the UI can
-    // catch and show as "couldn't analyze this photo, try again."
+    // Triage failing shouldn't crash the chat — surface as a thrown error
+    // the UI can catch and show as "couldn't analyze this photo, try again."
     throw new Error(err instanceof Error ? err.message : "Photo analysis failed");
   }
 
-  if (results.length === 0) return [];
+  const sourceWarning = sourceSuspicious ? { suspicious: true, reasons: sourceFlagReasons } : null;
+
+  if (issues.length === 0) return { flags: [], sourceWarning };
 
   const created = await prisma.$transaction(
-    results.map((r) =>
+    issues.map((r) =>
       prisma.inspectionFlag.create({
         data: {
           vehicleId: opts.vehicleId ?? null,
@@ -122,13 +162,15 @@ export async function inspectVehicleParts(
           description: typeof r.description === "string" ? r.description : "",
           confidence: typeof r.confidence === "number" ? r.confidence : 0,
           severity: typeof r.severity === "string" ? r.severity : null,
+          sourceSuspicious,
+          sourceFlagReasons,
           rawResponse: r as any,
         },
       }),
     ),
   );
 
-  return created.map(toDisplay);
+  return { flags: created.map(toDisplay), sourceWarning };
 }
 
 // ============================================================

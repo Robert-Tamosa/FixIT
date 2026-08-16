@@ -14,6 +14,7 @@ import { createEstimate, editEstimate } from "@/app/actions/estimate";
 import { generateInvoice } from "@/app/actions/invoice";
 import { getPayment, type DisplayPayment } from "@/app/actions/payment";
 import { ConfirmCashPaymentButton } from "@/components/payment/ConfirmCashPaymentButton";
+import { usePolling } from "@/app/hooks/usePolling";
 
 interface ShopDashboardProps {
   shopName: string;
@@ -61,6 +62,8 @@ export function ShopDashboardView({
     { label: "Today's Revenue", value: formatPHP(stats.todaysRevenue) },
     { label: "Pending Requests", value: stats.pendingRequests },
   ];
+
+  usePolling(6000);
 
   return (
     <div className="min-h-screen bg-[#080909]">
@@ -368,6 +371,7 @@ function BookingActionCard({
 
 function BookingActionSections() {
   const [bookings, setBookings] = useState<DisplayShopBooking[] | null>(null);
+  const [doneUnpaidIds, setDoneUnpaidIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [estimatingId, setEstimatingId] = useState<string | null>(null);
   const [invoicingBookingId, setInvoicingBookingId] = useState<string | null>(null);
@@ -375,14 +379,36 @@ function BookingActionSections() {
   const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
 
   // Fetches everything (no status filter — full history is /jobs' job now)
-  // and splits into Pending / Active client-side. Same reasoning as before
-  // for why this is useEffect, not a useState initializer: an async call
-  // that eventually setStates must be deferred past the initial render.
+  // and splits into Pending / Active client-side. Also checks payment
+  // status for any DONE booking — previously these were fetched but then
+  // silently dropped (not PENDING, not in ACTIVE_STATUSES, so they matched
+  // neither group and just vanished). Now a DONE-but-unpaid booking joins
+  // Active instead, same treatment as the owner/mechanic dashboards.
   async function load() {
     setLoading(true);
     try {
       const data = await getShopBookings(undefined);
       setBookings(data);
+
+      const doneBookings = data.filter((b) => b.status === "DONE");
+      if (doneBookings.length > 0) {
+        const results = await Promise.all(
+          doneBookings.map(async (b) => {
+            try {
+              const p = await getPayment(b.id);
+              return { id: b.id, unpaid: !p || p.status !== "PAID" };
+            } catch {
+              // Best-effort — if we can't confirm payment status, don't
+              // claim it's unpaid; leave it out of Active rather than risk
+              // a false "payment pending" on something already settled.
+              return { id: b.id, unpaid: false };
+            }
+          }),
+        );
+        setDoneUnpaidIds(new Set(results.filter((r) => r.unpaid).map((r) => r.id)));
+      } else {
+        setDoneUnpaidIds(new Set());
+      }
     } finally {
       setLoading(false);
     }
@@ -446,7 +472,9 @@ function BookingActionSections() {
   }
 
   const pending = (bookings ?? []).filter((b) => b.status === "PENDING");
-  const active  = (bookings ?? []).filter((b) => ACTIVE_STATUSES.has(b.status));
+  const active  = (bookings ?? []).filter(
+    (b) => ACTIVE_STATUSES.has(b.status) || (b.status === "DONE" && doneUnpaidIds.has(b.id)),
+  );
 
   const cardProps = {
     estimatingId,

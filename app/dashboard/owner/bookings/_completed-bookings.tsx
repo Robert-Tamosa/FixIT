@@ -176,7 +176,7 @@ function InvoiceViewModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center sm:justify-center
+    <div className="fixed inset-0 z-[70] flex items-center sm:items-center sm:justify-center
       bg-black/75 backdrop-blur-sm px-4 pb-4 sm:pb-0"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-md rounded-3xl border border-white/[0.08]

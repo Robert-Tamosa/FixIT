@@ -11,6 +11,8 @@ import {
 import { createEstimate, editEstimate } from "@/app/actions/estimate";
 import { setAvailability } from "@/app/actions/mechanic-location";
 import { generateInvoice } from "@/app/actions/invoice";
+import { getPayment, type DisplayPayment } from "@/app/actions/payment";
+import { ConfirmCashPaymentButton } from "@/components/payment/ConfirmCashPaymentButton";
 
 // ── Exported types ────────────────────────────────────────────────────────────
 
@@ -64,7 +66,11 @@ export interface ActiveJob {
   ownerPhone?: string | null;
   vehicleLabel: string;
   problem: string;
-  status: "ESTIMATE_ACCEPTED" | "EN_ROUTE" | "IN_PROGRESS";
+  // DONE added — these cards now also cover done-but-unpaid jobs, which
+  // stay visible on Home until payment clears rather than disappearing the
+  // moment status hits DONE. See JobPaymentStrip / ActiveJobCard's isDone
+  // branch below for what actually changes in that state.
+  status: "ESTIMATE_ACCEPTED" | "EN_ROUTE" | "IN_PROGRESS" | "DONE";
   isEmergency: boolean;
   scheduledAt: string | null;
   price: string;
@@ -948,6 +954,62 @@ const NEXT_LABEL: Record<string, string> = {
   IN_PROGRESS: "Mark Complete",
 };
 
+// ── Job Payment Strip ─────────────────────────────────────────────────────────
+// Self-fetching, same pattern as the shop dashboard's PaymentStatusStrip —
+// keeps ActiveJobCard from needing payment fields threaded all the way
+// through the props chain. Only rendered for DONE jobs.
+
+function JobPaymentStrip({ bookingId }: { bookingId: string }) {
+  const [payment, setPayment] = useState<DisplayPayment | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPayment(bookingId)
+      .then((p) => { if (!cancelled) setPayment(p); })
+      .catch(() => { /* best-effort — leave the card without this strip on error */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [bookingId]);
+
+  if (loading) {
+    return <p className="text-xs text-zinc-600 text-center py-2">Checking payment status…</p>;
+  }
+
+  if (payment?.status === "PAID") {
+    // Shouldn't normally appear here — doneUnpaidJobs is queried to exclude
+    // paid bookings — but shown defensively in case of a stale poll.
+    return (
+      <div className="px-3 py-2.5 rounded-xl bg-emerald-400/10 border border-emerald-400/20
+        text-xs font-semibold text-emerald-400 text-center">
+        Paid {payment.method === "CASH" ? "in cash" : `via ${payment.paidVia ?? "online"}`}
+      </div>
+    );
+  }
+
+  if (payment?.method === "CASH" && payment.status === "PENDING") {
+    return <ConfirmCashPaymentButton bookingId={bookingId} />;
+  }
+
+  if (payment?.method === "ONLINE" && payment.status === "PENDING") {
+    return (
+      <div className="px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.07]
+        text-xs text-zinc-500 text-center">
+        Waiting on the owner's online payment
+      </div>
+    );
+  }
+
+  // No payment row / no method chosen yet — owner hasn't picked cash vs
+  // online in their invoice card.
+  return (
+    <div className="px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.07]
+      text-xs text-zinc-500 text-center">
+      Waiting for the owner to choose a payment method
+    </div>
+  );
+}
+
 function ActiveJobCard({
   job,
   onAdvanceStatus,
@@ -956,18 +1018,20 @@ function ActiveJobCard({
   onAdvanceStatus: (id: string) => void;
 }) {
   const router = useRouter();
+  const isDone = job.status === "DONE";
   const stepIndex = JOB_STEPS.indexOf(job.status as (typeof JOB_STEPS)[number]);
 
   return (
     <div
-      className="mb-5 rounded-2xl border border-white/[0.09] bg-white/[0.03] p-5
-      ring-1 ring-emerald-400/10">
+      className={`mb-5 rounded-2xl border bg-white/[0.03] p-5 ${
+        isDone ? "border-blue-400/25" : "border-white/[0.09] ring-1 ring-emerald-400/10"
+      }`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className={`w-2 h-2 rounded-full ${isDone ? "bg-blue-400" : "bg-emerald-400 animate-pulse"}`} />
           <span className="text-sm font-semibold text-zinc-100">
-            Active Job
+            {isDone ? "Payment Pending" : "Active Job"}
           </span>
         </div>
         <span
@@ -993,188 +1057,197 @@ function ActiveJobCard({
         </div>
         <div className="text-right shrink-0">
           <p className="font-bold text-zinc-100">{job.price}</p>
-          <p className="text-[11px] text-zinc-500 mt-0.5">Est. price</p>
+          <p className="text-[11px] text-zinc-500 mt-0.5">{isDone ? "Total" : "Est. price"}</p>
         </div>
       </div>
 
-      {/* Progress steps */}
-      <div className="mb-5">
-        <div className="flex items-center mb-2">
-          {JOB_STEPS.map((step, i) => (
-            <div
-              key={step}
-              className="flex items-center flex-1 last:flex-none">
-              <div
-                className={[
-                  "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
-                  "text-[10px] font-bold transition-all",
-                  i < stepIndex
-                    ? "bg-amber-400 text-[#080909]"
-                    : i === stepIndex
-                      ? "bg-amber-400/15 border-2 border-amber-400 text-amber-400"
-                      : "bg-white/[0.05] text-zinc-600 border border-white/[0.08]",
-                ].join(" ")}>
-                {i < stepIndex ? (
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 12 12"
-                    fill="none">
-                    <path
-                      d="M2 6L5 9L10 3"
-                      stroke="#080909"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  i + 1
-                )}
-              </div>
-              {i < JOB_STEPS.length - 1 && (
+      {isDone ? (
+        // Job is finished — no progress bar, no advance/track buttons. Just
+        // the payment state, so this card has a reason to keep existing
+        // instead of vanishing the moment status hit DONE.
+        <JobPaymentStrip bookingId={job.id} />
+      ) : (
+        <>
+          {/* Progress steps */}
+          <div className="mb-5">
+            <div className="flex items-center mb-2">
+              {JOB_STEPS.map((step, i) => (
                 <div
-                  className={[
-                    "flex-1 h-[2px] mx-1 transition-all",
-                    i < stepIndex ? "bg-amber-400" : "bg-white/[0.07]",
-                  ].join(" ")}
-                />
-              )}
+                  key={step}
+                  className="flex items-center flex-1 last:flex-none">
+                  <div
+                    className={[
+                      "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
+                      "text-[10px] font-bold transition-all",
+                      i < stepIndex
+                        ? "bg-amber-400 text-[#080909]"
+                        : i === stepIndex
+                          ? "bg-amber-400/15 border-2 border-amber-400 text-amber-400"
+                          : "bg-white/[0.05] text-zinc-600 border border-white/[0.08]",
+                    ].join(" ")}>
+                    {i < stepIndex ? (
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 12 12"
+                        fill="none">
+                        <path
+                          d="M2 6L5 9L10 3"
+                          stroke="#080909"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      i + 1
+                    )}
+                  </div>
+                  {i < JOB_STEPS.length - 1 && (
+                    <div
+                      className={[
+                        "flex-1 h-[2px] mx-1 transition-all",
+                        i < stepIndex ? "bg-amber-400" : "bg-white/[0.07]",
+                      ].join(" ")}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="flex justify-between">
-          {JOB_STEPS.map((step, i) => (
-            <span
-              key={step}
-              className={[
-                "text-[9px] leading-tight",
-                i === stepIndex
-                  ? "text-amber-400 font-semibold"
-                  : "text-zinc-600",
-              ].join(" ")}>
-              {JOB_LABELS[step]}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Notes (optional) */}
-      {job.notes && (
-        <div
-          className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-xl
-          bg-white/[0.03] border border-white/[0.07]">
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            className="mt-0.5 shrink-0"
-            aria-hidden="true">
-            <path
-              d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
-              stroke="#71717A"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            <path
-              d="M14 2v6h6M16 13H8M16 17H8"
-              stroke="#71717A"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className="text-xs text-zinc-400 line-clamp-2">
-            {job.notes}
-          </span>
-        </div>
-      )}
-
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        {/* message client */}
-        <button
-          aria-label="Message Client"
-          className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true">
-            <path
-              d="M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z"
-              stroke="#71717A"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-
-        {/* Track button */}
-        <button
-          onClick={() => router.push(`/dashboard/mechanic/tracking/${job.id}`)}
-          aria-label="Share location"
-          className="w-11 h-11 rounded-xl bg-emerald-400/10 border border-emerald-400/20
-            flex items-center justify-center hover:bg-emerald-400/15 transition-colors shrink-0">
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true">
-            <path
-              d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
-              stroke="#34D399"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <circle
-              cx="12"
-              cy="10"
-              r="3"
-              stroke="#34D399"
-              strokeWidth="1.6"
-            />
-          </svg>
-        </button>
-
-        {/* Advance status */}
-        {job.status === "IN_PROGRESS" ? (
-          <button
-            onClick={() => onAdvanceStatus(job.id)}
-            className="flex-1 py-2.5 rounded-xl bg-emerald-500 text-sm font-bold text-black
-              hover:bg-emerald-400 active:scale-[0.98] transition-all
-              shadow-[0_4px_20px_rgba(52,211,153,0.2)]">
-            Mark Complete ✓
-          </button>
-        ) : job.status === "EN_ROUTE" && job.isEmergency ? (
-          // Emergency jobs auto-advance EN_ROUTE -> IN_PROGRESS via the
-          // geofence check on the tracking page once the mechanic is within
-          // range — no manual tap needed or offered here for this specific
-          // transition. Still shows something (not an empty gap) so it's
-          // clear this isn't a missing button, it's intentional.
-          <div className="flex-1 py-2.5 rounded-xl bg-orange-500/10 border border-orange-500/25
-            flex items-center justify-center gap-1.5">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
-                stroke="#FB923C" strokeWidth="1.6" />
-              <circle cx="12" cy="10" r="3" stroke="#FB923C" strokeWidth="1.6" />
-            </svg>
-            <span className="text-xs text-orange-300 font-semibold">Auto-starts on arrival</span>
+            <div className="flex justify-between">
+              {JOB_STEPS.map((step, i) => (
+                <span
+                  key={step}
+                  className={[
+                    "text-[9px] leading-tight",
+                    i === stepIndex
+                      ? "text-amber-400 font-semibold"
+                      : "text-zinc-600",
+                  ].join(" ")}>
+                  {JOB_LABELS[step]}
+                </span>
+              ))}
+            </div>
           </div>
-        ) : (
-          <button
-            onClick={() => onAdvanceStatus(job.id)}
-            className="flex-1 py-2.5 rounded-xl bg-amber-500 text-sm font-bold text-black
-              hover:bg-amber-400 active:scale-[0.98] transition-all
-              shadow-[0_4px_20px_rgba(245,158,11,0.2)]">
-            {NEXT_LABEL[job.status]}
-          </button>
-        )}
-      </div>
+
+          {/* Notes (optional) */}
+          {job.notes && (
+            <div
+              className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-xl
+              bg-white/[0.03] border border-white/[0.07]">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                className="mt-0.5 shrink-0"
+                aria-hidden="true">
+                <path
+                  d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                  stroke="#71717A"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M14 2v6h6M16 13H8M16 17H8"
+                  stroke="#71717A"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+              <span className="text-xs text-zinc-400 line-clamp-2">
+                {job.notes}
+              </span>
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div className="flex gap-2">
+            {/* message client */}
+            <button
+              aria-label="Message Client"
+              className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true">
+                <path
+                  d="M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z"
+                  stroke="#71717A"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+
+            {/* Track button */}
+            <button
+              onClick={() => router.push(`/dashboard/mechanic/tracking/${job.id}`)}
+              aria-label="Share location"
+              className="w-11 h-11 rounded-xl bg-emerald-400/10 border border-emerald-400/20
+                flex items-center justify-center hover:bg-emerald-400/15 transition-colors shrink-0">
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true">
+                <path
+                  d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
+                  stroke="#34D399"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  cx="12"
+                  cy="10"
+                  r="3"
+                  stroke="#34D399"
+                  strokeWidth="1.6"
+                />
+              </svg>
+            </button>
+
+            {/* Advance status */}
+            {job.status === "IN_PROGRESS" ? (
+              <button
+                onClick={() => onAdvanceStatus(job.id)}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-500 text-sm font-bold text-black
+                  hover:bg-emerald-400 active:scale-[0.98] transition-all
+                  shadow-[0_4px_20px_rgba(52,211,153,0.2)]">
+                Mark Complete ✓
+              </button>
+            ) : job.status === "EN_ROUTE" && job.isEmergency ? (
+              // Emergency jobs auto-advance EN_ROUTE -> IN_PROGRESS via the
+              // geofence check on the tracking page once the mechanic is within
+              // range — no manual tap needed or offered here for this specific
+              // transition. Still shows something (not an empty gap) so it's
+              // clear this isn't a missing button, it's intentional.
+              <div className="flex-1 py-2.5 rounded-xl bg-orange-500/10 border border-orange-500/25
+                flex items-center justify-center gap-1.5">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
+                    stroke="#FB923C" strokeWidth="1.6" />
+                  <circle cx="12" cy="10" r="3" stroke="#FB923C" strokeWidth="1.6" />
+                </svg>
+                <span className="text-xs text-orange-300 font-semibold">Auto-starts on arrival</span>
+              </div>
+            ) : (
+              <button
+                onClick={() => onAdvanceStatus(job.id)}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-sm font-bold text-black
+                  hover:bg-amber-400 active:scale-[0.98] transition-all
+                  shadow-[0_4px_20px_rgba(245,158,11,0.2)]">
+                {NEXT_LABEL[job.status]}
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1227,7 +1300,6 @@ function GenerateInvoiceModal({
     setSubmitting(true);
     setError(null);
     try {
-      // Import at the top of the file: import { generateInvoice } from "@/app/actions/invoice";
       await generateInvoice(job.id, validItems, notes || undefined);
       onClose();
     } catch (e) {
@@ -1240,11 +1312,14 @@ function GenerateInvoiceModal({
   if (!isOpen || !job) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div
-        className="relative w-full sm:max-w-md bg-[#0c0d0e] border border-white/[0.08]
-        rounded-t-3xl sm:rounded-3xl p-6 max-h-[88vh] overflow-y-auto space-y-4">
+  <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
+    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+    <div
+      className="relative w-full sm:max-w-md bg-[#0c0d0e] border border-white/[0.08]
+      rounded-t-3xl sm:rounded-3xl max-h-[90dvh] flex flex-col">
+
+      {/* Scrollable content */}
+      <div className="overflow-y-auto p-6 space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-zinc-100">
             Generate Invoice
@@ -1256,9 +1331,7 @@ function GenerateInvoiceModal({
 
         <div className="space-y-2.5">
           {items.map((item, i) => (
-            <div
-              key={i}
-              className="flex gap-2 items-start">
+            <div key={i} className="flex gap-2 items-start">
               <input
                 placeholder="Description (e.g. Labor, Spark plugs)"
                 value={item.description}
@@ -1297,9 +1370,7 @@ function GenerateInvoiceModal({
               )}
             </div>
           ))}
-          <button
-            onClick={addItem}
-            className="text-xs text-amber-400 font-medium">
+          <button onClick={addItem} className="text-xs text-amber-400 font-medium">
             + Add line item
           </button>
         </div>
@@ -1313,19 +1384,21 @@ function GenerateInvoiceModal({
             text-zinc-100 text-sm placeholder:text-zinc-600 outline-none resize-none focus:border-amber-400/50"
         />
 
-        <div className="flex justify-between items-center pt-2 border-t border-white/[0.08]">
-          <span className="text-sm text-zinc-400">Total</span>
-          <span className="text-lg font-bold text-amber-400">
-            ₱{total.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-          </span>
-        </div>
-
         {error && (
           <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2">
             {error}
           </p>
         )}
+      </div>
 
+      {/* Sticky footer — always visible, never scrolls out of reach */}
+      <div className="shrink-0 border-t border-white/[0.08] p-6 pt-4 space-y-3 bg-[#0c0d0e]">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-zinc-400">Total</span>
+          <span className="text-lg font-bold text-amber-400">
+            ₱{total.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+          </span>
+        </div>
         <button
           onClick={handleSubmit}
           disabled={submitting}
@@ -1335,7 +1408,8 @@ function GenerateInvoiceModal({
         </button>
       </div>
     </div>
-  );
+  </div>
+);
 }
 
 // ── No Active Job ─────────────────────────────────────────────────────────────
@@ -1653,6 +1727,7 @@ interface MechanicDashboardProps {
   needsEstimateJobs: NeedsEstimateJob[];
   awaitingEstimateJobs: AwaitingEstimateJob[];
   activeJob: ActiveJob | null;
+  doneUnpaidJobs: ActiveJob[];
   upcomingJobs: UpcomingJob[];
   recentReviews: RecentReview[];
 }
@@ -1664,12 +1739,14 @@ export default function MechanicDashboardView({
   needsEstimateJobs,
   awaitingEstimateJobs,
   activeJob: initialActiveJob,
+  doneUnpaidJobs: initialDoneUnpaidJobs,
   upcomingJobs,
   recentReviews,
 }: MechanicDashboardProps) {
   const router = useRouter();
   const [requests, setRequests] = useState(initialRequests);
   const [activeJob, setActiveJob] = useState(initialActiveJob);
+  const [doneUnpaidJobs, setDoneUnpaidJobs] = useState(initialDoneUnpaidJobs);
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [invoicingJob, setInvoicingJob] = useState<ActiveJob | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -1690,6 +1767,10 @@ export default function MechanicDashboardView({
   useEffect(() => {
     setActiveJob(initialActiveJob);
   }, [initialActiveJob]);
+
+  useEffect(() => {
+    setDoneUnpaidJobs(initialDoneUnpaidJobs);
+  }, [initialDoneUnpaidJobs]);
 
   async function handleAccept(id: string) {
     const req = requests.find((r) => r.id === id);
@@ -1813,9 +1894,17 @@ export default function MechanicDashboardView({
             job={activeJob}
             onAdvanceStatus={handleAdvanceStatus}
           />
-        ) : (
+        ) : doneUnpaidJobs.length === 0 ? (
           <NoActiveJob />
-        )}
+        ) : null}
+
+        {doneUnpaidJobs.map((job) => (
+          <ActiveJobCard
+            key={job.id}
+            job={job}
+            onAdvanceStatus={handleAdvanceStatus}
+          />
+        ))}
 
         <UpcomingJobsSection jobs={upcomingJobs} />
 

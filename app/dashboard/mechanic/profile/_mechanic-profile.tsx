@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { BottomNav } from "../_mechanic-dashboard";
+import { DirectWalletSetup } from "@/components/payment/DirectWalletSetup";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -154,7 +155,7 @@ function SettingsDrawer({
 
         {/* Version */}
         <div className="px-5 py-3 border-t border-zinc-800/60">
-          <p className="text-[11px] text-zinc-700 text-center">FixIT Mechanic App · v1.0.0</p>
+          <p className="text-[11px] text-zinc-700 text-center">FixIT App · v1.0.0</p>
         </div>
       </div>
     </div>
@@ -384,6 +385,8 @@ export default function MechanicProfileView(props: MechanicProfileProps) {
             )}
           </div>
         </div>
+
+        <DirectWalletSetup />
 
         {/* Specializations */}
         <div className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">

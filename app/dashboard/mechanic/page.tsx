@@ -107,9 +107,7 @@ export default async function MechanicDashboardPage() {
   }));
 
   // ── 3a. Needs estimate (CONFIRMED — mechanic accepted, hasn't sent a
-  //        cost estimate yet). This used to be treated as "active job" and
-  //        would show the travel/progress tracker immediately — wrong, per
-  //        the estimate step in the booking flow.
+  //        cost estimate yet).
   const rawNeedsEstimate = await prisma.booking.findMany({
     where: {
       mechanicId: session.user.id,
@@ -130,9 +128,7 @@ export default async function MechanicDashboardPage() {
     problem:       b.problemDescription,
   }));
 
-  // ── 3b. Awaiting owner's response (ESTIMATE_SENT — estimate submitted,
-  //        nothing for the mechanic to do but wait for the owner to accept
-  //        or decline it).
+  // ── 3b. Awaiting owner's response (ESTIMATE_SENT)
   const rawAwaitingEstimate = await prisma.booking.findMany({
     where: {
       mechanicId: session.user.id,
@@ -158,9 +154,8 @@ export default async function MechanicDashboardPage() {
     notes:         b.estimate?.notes ?? null,
   }));
 
-  // ── 3c. Active job (ESTIMATE_ACCEPTED | EN_ROUTE | IN_PROGRESS) — owner
-  //        has accepted the estimate, this is what actually gets the
-  //        travel/progress tracker now.
+  // ── 3c. Active job (ESTIMATE_ACCEPTED | EN_ROUTE | IN_PROGRESS) — single
+  //        slot, unchanged from before.
   const rawActive = await prisma.booking.findFirst({
     where: {
       mechanicId: session.user.id,
@@ -187,10 +182,40 @@ export default async function MechanicDashboardPage() {
       }
     : null;
 
+  // ── 3d. Done, but not yet paid — NEW. findMany, not findFirst: a mechanic
+  //        can genuinely have a job in progress AND a separate, earlier job
+  //        sitting done-unpaid at the same time — these are independent of
+  //        the single activeJob slot above, not a replacement for it.
+  const rawDoneUnpaid = await prisma.booking.findMany({
+    where: {
+      mechanicId: session.user.id,
+      status:     "DONE",
+      OR: [
+        { payment: null },
+        { payment: { status: { not: "PAID" } } },
+      ],
+    },
+    include: {
+      owner:   { select: { name: true } },
+      vehicle: { select: { brand: true, model: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const doneUnpaidJobs: ActiveJob[] = rawDoneUnpaid.map((b) => ({
+    id:            b.id,
+    ownerName:     b.owner.name   ?? "Unknown",
+    ownerInitials: getInitials(b.owner.name),
+    vehicleLabel:  `${b.vehicle.brand} ${b.vehicle.model}`,
+    problem:       b.problemDescription,
+    status:        "DONE",
+    isEmergency:   b.isEmergency ?? false,
+    scheduledAt:   formatDate(b.scheduledAt),
+    price:         formatPrice(b.price),
+  }));
+
   // ── 4. Upcoming jobs (future, estimate already accepted, beyond the
-  //        currently-active one). Previously filtered on CONFIRMED, which
-  //        now means "still needs an estimate" — fixed to ESTIMATE_ACCEPTED
-  //        so this only shows jobs that are genuinely locked in.
+  //        currently-active one).
   const rawUpcoming = await prisma.booking.findMany({
     where: {
       mechanicId:  session.user.id,
@@ -226,7 +251,6 @@ export default async function MechanicDashboardPage() {
   weekStart.setHours(0, 0, 0, 0);
 
   const [todayJobs, weekBookings, ratingAgg, done, cancelled] = await Promise.all([
-    // Today's completed jobs
     prisma.booking.count({
       where: {
         mechanicId: session.user.id,
@@ -234,7 +258,6 @@ export default async function MechanicDashboardPage() {
         updatedAt:  { gte: todayStart },
       },
     }),
-    // This week's completed bookings (for earnings sum)
     prisma.booking.findMany({
       where: {
         mechanicId: session.user.id,
@@ -243,17 +266,14 @@ export default async function MechanicDashboardPage() {
       },
       select: { price: true },
     }),
-    // Rating aggregate
     prisma.mechanicRating.aggregate({
       where:  { mechanicId: session.user.id },
       _avg:   { rating: true },
       _count: { rating: true },
     }),
-    // Completion rate numerator
     prisma.booking.count({  
       where: { mechanicId: session.user.id, status: "DONE" },
     }),
-    // Completion rate denominator addend
     prisma.booking.count({
       where: { mechanicId: session.user.id, status: "CANCELLED" },
     }),
@@ -300,6 +320,7 @@ export default async function MechanicDashboardPage() {
       needsEstimateJobs={needsEstimateJobs}
       awaitingEstimateJobs={awaitingEstimateJobs}
       activeJob={activeJob}
+      doneUnpaidJobs={doneUnpaidJobs}
       upcomingJobs={upcomingJobs}
       recentReviews={recentReviews}
     />

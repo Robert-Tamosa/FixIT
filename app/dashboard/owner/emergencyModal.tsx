@@ -154,11 +154,11 @@ export function EmergencyModal({ isOpen, onClose, onDispatched }: EmergencyModal
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full sm:max-w-md bg-[#0c0d0e] border border-white/[0.08]
-        rounded-t-3xl sm:rounded-3xl p-6 max-h-[88vh] overflow-y-auto">
+return (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <div className="relative w-full sm:max-w-md bg-[#0c0d0e] border border-white/[0.08]
+      rounded-3xl p-6 max-h-[88vh] overflow-y-auto">
 
         {step === "select-vehicle" && (
           <div className="space-y-4">

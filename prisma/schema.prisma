@@ -30,8 +30,10 @@ enum PaymentStatus {
 }
 
 enum PaymentMethod {
-  CASH
-  ONLINE
+   CASH
+   ONLINE
+   GCASH_DIRECT   // NEW
+   MAYA_DIRECT    // NEW
 }
 
 // Distinct from PaymentStatus (above, used by Invoice) — Invoice only ever
@@ -182,6 +184,12 @@ model MechanicProfile {
   user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   specializations    MechanicSpecialization[]
   shop               RepairShop?              @relation(fields: [shopId], references: [id])
+  gcashQrImage      String?  @db.Text   
+  gcashAccountName  String?             
+  gcashIsBusiness   Boolean?            
+  mayaQrImage       String?  @db.Text
+  mayaAccountName   String?
+  mayaIsBusiness    Boolean?
 
 }
 
@@ -294,11 +302,16 @@ model RepairShop {
   isVerified         Boolean             @default(false)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
-
   owner              User                @relation("ShopOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   mechanics          MechanicProfile[]
   ratings            ShopRating[]
   bookings           Booking[]
+  gcashQrImage      String?  @db.Text
+  gcashAccountName  String?
+  gcashIsBusiness   Boolean?
+  mayaQrImage       String?  @db.Text
+  mayaAccountName   String?
+  mayaIsBusiness    Boolean?
 }
 
 model ShopRating {
@@ -368,12 +381,12 @@ model Payment {
   id        String  @id @default(cuid())
   bookingId String  @unique
   booking   Booking @relation(fields: [bookingId], references: [id])
-
+  ownerMarkedSentAt   DateTime?
   amount Decimal           @db.Decimal(10, 2) // copied from Invoice.totalAmount when the method is chosen
   method PaymentMethod?                        // null until the owner picks one
   status PaymentTxnStatus  @default(PENDING)
-
-  // --- ONLINE (PayMongo) fields — populated only when method = ONLINE ---
+  directAccountName   String?
+  directIsBusiness    Boolean?
   providerSourceId String? @unique // PayMongo Source id, e.g. "src_xxx"
   checkoutUrl       String?
   paidVia           String?        // "gcash" | "maya"
@@ -387,6 +400,8 @@ model Payment {
   paidAt    DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  directQrImage       String?  @db.Text
+
 
   @@index([status])
 }
@@ -424,6 +439,8 @@ model VehicleDocument {
   vehicle      Vehicle? @relation(fields: [vehicleId], references: [id])
   uploadedById String
   uploadedBy   User     @relation("VehicleDocumentsUploaded", fields: [uploadedById], references: [id])
+  sourceSuspicious    Boolean  @default(false)
+  sourceFlagReasons   String[] @default([])
 
   // Pragmatic MVP choice, flagged explicitly: the photo is stored as a
   // base64 data URI directly in this column, not in a separate object-storage
@@ -469,6 +486,8 @@ model InspectionFlag {
   vehicle   Vehicle? @relation(fields: [vehicleId], references: [id])
   ownerId   String
   owner     User     @relation("InspectionFlagsOwned", fields: [ownerId], references: [id])
+  sourceSuspicious    Boolean  @default(false)
+  sourceFlagReasons   String[] @default([])
 
   // Optional — set when the scan happens from within an active booking's
   // context (narrows who's authorized to review, see inspection.ts). Null

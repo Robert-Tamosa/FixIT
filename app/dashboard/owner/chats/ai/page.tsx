@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { inspectVehicleParts, type DisplayInspectionFlag } from "@/app/actions/inspection";
+import { inspectVehicleParts, type DisplayInspectionFlag, type InspectionResult } from "@/app/actions/inspection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -13,6 +13,7 @@ interface Message {
   loading?: boolean;
   photo?: string; // data URL, set on the user's message when it's a photo-inspection turn
   inspectionFlags?: DisplayInspectionFlag[]; // set on the assistant's reply to a photo-inspection turn
+  sourceWarning?: { suspicious: boolean; reasons: string[] } | null; // set alongside inspectionFlags, even when flags is empty
 }
 
 interface DiagnosticResult {
@@ -144,9 +145,33 @@ const SEVERITY_STYLES: Record<string, string> = {
   needs_attention: "text-red-400 bg-red-400/10 border-red-400/20",
 };
 
-function InspectionFlagsCard({ flags }: { flags: DisplayInspectionFlag[] }) {
+function InspectionFlagsCard({
+  flags,
+  sourceWarning,
+}: {
+  flags: DisplayInspectionFlag[];
+  sourceWarning?: { suspicious: boolean; reasons: string[] } | null;
+}) {
   return (
     <div className="mt-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+      {sourceWarning?.suspicious && (
+        <div className="px-4 py-3 border-b border-red-400/20 bg-red-400/[0.06] space-y-1.5">
+          <p className="text-xs font-medium text-red-400 flex items-center gap-1.5">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            This may not be an original photo
+          </p>
+          {sourceWarning.reasons.length > 0 && (
+            <ul className="text-[11px] text-red-300/80 list-disc list-inside space-y-0.5">
+              {sourceWarning.reasons.map((reason, i) => (
+                <li key={i}>{reason}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="px-4 py-3 border-b border-white/[0.07]">
         <p className="text-[11px] text-zinc-500 leading-relaxed">
           Spotted from your photo — not a diagnosis, just flags for your mechanic to check in person.
@@ -171,7 +196,7 @@ function InspectionFlagsCard({ flags }: { flags: DisplayInspectionFlag[] }) {
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, onPhotoClick }: { msg: Message; onPhotoClick: (url: string) => void }) {
   const isUser = msg.role === "user";
 
   // Try to parse AI result from assistant messages (skip for inspection replies,
@@ -202,11 +227,18 @@ function MessageBubble({ msg }: { msg: Message }) {
 
       <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
         {msg.photo && (
-          <img
-            src={msg.photo}
-            alt="Photo submitted for inspection"
-            className={`w-40 h-40 object-cover rounded-2xl mb-1.5 ${isUser ? "rounded-tr-sm" : "rounded-tl-sm"}`}
-          />
+          <button
+            type="button"
+            onClick={() => onPhotoClick(msg.photo!)}
+            aria-label="View photo full size"
+            className="mb-1.5 active:scale-[0.97] transition-transform"
+          >
+            <img
+              src={msg.photo}
+              alt="Photo submitted for inspection"
+              className={`w-40 h-40 object-cover rounded-2xl cursor-pointer ${isUser ? "rounded-tr-sm" : "rounded-tl-sm"}`}
+            />
+          </button>
         )}
         {msg.loading ? (
           <div className="flex items-center gap-2 px-4 py-3 rounded-2xl rounded-tl-sm
@@ -225,7 +257,7 @@ function MessageBubble({ msg }: { msg: Message }) {
         ) : parsed ? (
           <DiagnosticCard result={parsed} />
         ) : msg.inspectionFlags ? (
-          <InspectionFlagsCard flags={msg.inspectionFlags} />
+          <InspectionFlagsCard flags={msg.inspectionFlags} sourceWarning={msg.sourceWarning} />
         ) : (
           <div className="px-4 py-2.5 rounded-2xl rounded-tl-sm
             bg-white/[0.04] border border-white/[0.08]">
@@ -239,6 +271,48 @@ function MessageBubble({ msg }: { msg: Message }) {
 
 // ── Main Chat Page ────────────────────────────────────────────────────────────
 
+// ── Photo Lightbox ────────────────────────────────────────────────────────────
+// Messenger-style: tap a thumbnail to expand full-screen, tap the backdrop,
+// the X, or Escape to close.
+
+function PhotoLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm px-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Photo, full size"
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute top-5 right-5 w-10 h-10 rounded-full bg-white/[0.08] border border-white/[0.12]
+          flex items-center justify-center hover:bg-white/[0.14] transition-colors"
+      >
+        <svg width="16" height="16" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M1 1l12 12M13 1L1 13" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      </button>
+      <img
+        src={src}
+        alt="Full size photo"
+        onClick={(e) => e.stopPropagation()}
+        className="max-w-full max-h-full object-contain rounded-lg"
+      />
+    </div>
+  );
+}
+
 export default function AIDiagnosticsChatPage() {
   const router = useRouter();
   const [messages,  setMessages]  = useState<Message[]>([
@@ -249,6 +323,7 @@ export default function AIDiagnosticsChatPage() {
     },
   ]);
   const [input,     setInput]     = useState("");
+  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
   const [loading,   setLoading]   = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
@@ -337,10 +412,16 @@ export default function AIDiagnosticsChatPage() {
     setInspecting(true);
 
     try {
-      const flags = await inspectVehicleParts(dataUrl, {});
+      const result: InspectionResult = await inspectVehicleParts(dataUrl, {});
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== "loading-inspect"),
-        { id: Date.now().toString() + "-flags", role: "assistant", content: "", inspectionFlags: flags },
+        {
+          id: Date.now().toString() + "-flags",
+          role: "assistant",
+          content: "",
+          inspectionFlags: result.flags,
+          sourceWarning: result.sourceWarning,
+        },
       ]);
     } catch (err) {
       setMessages((prev) => [
@@ -413,7 +494,7 @@ export default function AIDiagnosticsChatPage() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-36">
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} msg={msg} />
+          <MessageBubble key={msg.id} msg={msg} onPhotoClick={setViewingPhoto} />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -582,6 +663,10 @@ export default function AIDiagnosticsChatPage() {
           </button>
         </div>
       </div>
+
+      {viewingPhoto && (
+        <PhotoLightbox src={viewingPhoto} onClose={() => setViewingPhoto(null)} />
+      )}
     </div>
   );
 }

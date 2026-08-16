@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, useCallback, useTransition } from "react";
 import { usePolling } from "@/app/hooks/usePolling";
 import { NotificationBell } from "@/components/NotificationBell";
+import { PaymentMethodCard } from "@/components/payment/PaymentMethodCard";
 
 const BookingModalLazy = dynamic(
   () => import("./bookingModal").then((m) => m.BookingModal),
@@ -600,18 +601,21 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
   // those — no assignment step exists anymore), so its presence is what
   // tells us which step progression and which name to show.
   const isShopBooking = !!booking.ShopName;
+  const isDone = booking.status === "DONE";
   const steps = isShopBooking ? SHOP_STEPS : MECHANIC_STEPS;
   const stepIndex = (steps as readonly string[]).indexOf(booking.status);
   const router = useRouter();
 
   return (
-    <div className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl p-5 mb-4">
+    <div className={`w-full bg-white/[0.03] border rounded-2xl p-5 mb-4 ${
+      isDone ? "border-blue-400/25" : "border-white/[0.08]"
+    }`}>
       {/* Title row */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          <span className={`w-2 h-2 rounded-full ${isDone ? "bg-blue-400" : "bg-amber-400 animate-pulse"}`} />
           <span className="text-sm font-semibold text-zinc-100">
-            Active Booking
+            {isDone ? "Payment Pending" : "Active Booking"}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -645,135 +649,145 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
         </div>
         <div className="text-right shrink-0">
           <p className="font-bold text-zinc-100">{booking.price}</p>
-          <StarRating value={booking.mechanicRating} />
+          {!isDone && <StarRating value={booking.mechanicRating} />}
         </div>
       </div>
 
-      {/* Progress steps */}
-      <div className="mb-5">
-        <div className="flex items-center mb-2">
-          {steps.map((step, i) => (
-            <div
-              key={step}
-              className="flex items-center flex-1 last:flex-none">
-              <div
-                className={[
-                  "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
-                  "text-[10px] font-bold transition-all",
-                  i < stepIndex
-                    ? "bg-amber-400 text-[#080909]"
-                    : i === stepIndex
-                      ? "bg-amber-400/15 border-2 border-amber-400 text-amber-400"
-                      : "bg-white/[0.05] text-zinc-600 border border-white/[0.08]",
-                ].join(" ")}>
-                {i < stepIndex ? (
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 12 12"
-                    fill="none">
-                    <path
-                      d="M2 6L5 9L10 3"
-                      stroke="#080909"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  i + 1
-                )}
-              </div>
-              {i < steps.length - 1 && (
+      {isDone ? (
+        // Job is finished — no progress bar, no Track Live. Just invoice +
+        // payment, right here, so the owner doesn't have to leave Home to
+        // pay. This is the whole point of this card staying visible post-
+        // completion instead of disappearing once status hits DONE.
+        <PaymentMethodCard bookingId={booking.id} />
+      ) : (
+        <>
+          {/* Progress steps */}
+          <div className="mb-5">
+            <div className="flex items-center mb-2">
+              {steps.map((step, i) => (
                 <div
-                  className={[
-                    "flex-1 h-[2px] mx-1 transition-all",
-                    i < stepIndex ? "bg-amber-400" : "bg-white/[0.07]",
-                  ].join(" ")}
-                />
-              )}
+                  key={step}
+                  className="flex items-center flex-1 last:flex-none">
+                  <div
+                    className={[
+                      "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
+                      "text-[10px] font-bold transition-all",
+                      i < stepIndex
+                        ? "bg-amber-400 text-[#080909]"
+                        : i === stepIndex
+                          ? "bg-amber-400/15 border-2 border-amber-400 text-amber-400"
+                          : "bg-white/[0.05] text-zinc-600 border border-white/[0.08]",
+                    ].join(" ")}>
+                    {i < stepIndex ? (
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 12 12"
+                        fill="none">
+                        <path
+                          d="M2 6L5 9L10 3"
+                          stroke="#080909"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      i + 1
+                    )}
+                  </div>
+                  {i < steps.length - 1 && (
+                    <div
+                      className={[
+                        "flex-1 h-[2px] mx-1 transition-all",
+                        i < stepIndex ? "bg-amber-400" : "bg-white/[0.07]",
+                      ].join(" ")}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="flex justify-between">
-          {steps.map((step, i) => (
-            <span
-              key={step}
-              className={[
-                "text-[9px] leading-tight",
-                i === stepIndex
-                  ? "text-amber-400 font-semibold"
-                  : "text-zinc-600",
-              ].join(" ")}>
-              {LABELS[step]}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-2">
-        <div
-          className="flex items-center gap-1.5 flex-1 px-3 py-2.5 rounded-xl
-          bg-white/[0.03] border border-white/[0.07]">
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true">
-            <circle
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="#71717A"
-              strokeWidth="1.5"
-            />
-            <path
-              d="M12 6v6l4 2"
-              stroke="#71717A"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className="text-xs text-zinc-400 truncate">
-            {booking.scheduledAt ? (
-              <>
-                <span className="text-zinc-500">Sched </span>
-                <span className="text-zinc-200 font-semibold">
-                  {booking.scheduledAt}
+            <div className="flex justify-between">
+              {steps.map((step, i) => (
+                <span
+                  key={step}
+                  className={[
+                    "text-[9px] leading-tight",
+                    i === stepIndex
+                      ? "text-amber-400 font-semibold"
+                      : "text-zinc-600",
+                  ].join(" ")}>
+                  {LABELS[step]}
                 </span>
-              </>
-            ) : (
-              <span className="text-zinc-500">Pending confirmation</span>
-            )}
-          </span>
-        </div>
-        <button
-          onClick={() => router.push(`/dashboard/owner/tracking/${booking.id}`)}
-          className="flex-1 py-2.5 px-3 rounded-xl bg-amber-400/10 border border-amber-400/20
-          text-amber-400 text-xs font-semibold hover:bg-amber-400/15 transition-colors text-center">
-          Track Live
-        </button>
-        <button
-          aria-label="Message mechanic"
-          className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true">
-            <path
-              d="M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z"
-              stroke="#71717A"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-      </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-1.5 flex-1 px-3 py-2.5 rounded-xl
+              bg-white/[0.03] border border-white/[0.07]">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="#71717A"
+                  strokeWidth="1.5"
+                />
+                <path
+                  d="M12 6v6l4 2"
+                  stroke="#71717A"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+              <span className="text-xs text-zinc-400 truncate">
+                {booking.scheduledAt ? (
+                  <>
+                    <span className="text-zinc-500">Sched </span>
+                    <span className="text-zinc-200 font-semibold">
+                      {booking.scheduledAt}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-zinc-500">Pending confirmation</span>
+                )}
+              </span>
+            </div>
+            <button
+              onClick={() => router.push(`/dashboard/owner/tracking/${booking.id}`)}
+              className="flex-1 py-2.5 px-3 rounded-xl bg-amber-400/10 border border-amber-400/20
+              text-amber-400 text-xs font-semibold hover:bg-amber-400/15 transition-colors text-center">
+              Track Live
+            </button>
+            <button
+              aria-label="Message mechanic"
+              className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center hover:bg-white/[0.08] transition-colors shrink-0">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true">
+                <path
+                  d="M2.003 5.884L10 12.882l7.997-6.998A2 2 0 0 0 16 4H4a2 2 0 0 0-1.997 1.884z M2 6.118v7.764A2 2 0 0 0 4 16h12a2 2 0 0 0 2-2V6.118l-8 7-8-7z"
+                  stroke="#71717A"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1096,6 +1110,7 @@ interface OwnerDashboardProps {
   activeBooking: DisplayBooking | null;
   pendingBooking: DisplayBooking | null;
   estimateReview: DisplayEstimateReview | null;
+  doneUnpaidBookings: DisplayBooking[];
   mechanics: DisplayMechanic[];
   vehicles?: DisplayVehicle[];
 }
@@ -1338,6 +1353,7 @@ export default function OwnerDashboardView({
   activeBooking,
   pendingBooking,
   estimateReview,
+  doneUnpaidBookings = [],
   mechanics = [],
   vehicles = [],
 }: OwnerDashboardProps) {
@@ -1434,9 +1450,12 @@ export default function OwnerDashboardView({
           <EstimateReviewCard booking={estimateReview} />
         ) : pendingBooking ? (
           <PendingBookingCard booking={pendingBooking} />
-        ) : (
+        ) : doneUnpaidBookings.length === 0 ? (
           <NoActiveBooking />
-        )}
+        ) : null}
+        {doneUnpaidBookings.map((b) => (
+          <ActiveBookingCard key={b.id} booking={b} />
+        ))}
         <NearbyMechanicsSection mechanics={mechanics} />
       </div>
 

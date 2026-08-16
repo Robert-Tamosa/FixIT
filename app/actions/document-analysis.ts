@@ -28,6 +28,8 @@ export type DisplayVehicleDocument = {
   status: "PENDING" | "EXTRACTED" | "CONFIRMED" | "FAILED";
   confidence: number | null;
   failReason: string | null;
+  sourceSuspicious: boolean;
+  sourceFlagReasons: string[];
   fields: {
     plateNumber: string | null;
     mvFileNumber: string | null;
@@ -50,6 +52,8 @@ function toDisplay(d: any): DisplayVehicleDocument {
     status: d.status,
     confidence: d.confidence,
     failReason: d.failReason,
+    sourceSuspicious: d.sourceSuspicious ?? false,
+    sourceFlagReasons: d.sourceFlagReasons ?? [],
     fields: {
       plateNumber: d.plateNumber,
       mvFileNumber: d.mvFileNumber,
@@ -73,6 +77,13 @@ const COR_PROMPT = `You are looking at a photo of a Philippine LTO (Land Transpo
 
 Extract the following fields. For ANY field you are not confident about (blurry, cut off, ambiguous, or not visible in the photo), return null for that field rather than guessing.
 
+Separately, examine the PHOTO ITSELF (not its content) for visible signs it may not be an original photo taken directly of a physical document by the person submitting it — for example:
+- A visible watermark, logo, or caption from a stock-photo site, search engine, or news source
+- Screenshot artifacts: browser chrome, address bar, scrollbar, cropped browser window edges
+- Studio-style staging (uniform backdrop, promotional lighting) inconsistent with a quick phone photo of a document on a desk or in hand
+- Visual artifacts sometimes seen in AI-generated images: warped or physically-impossible text/edges, unnaturally smooth or repeating textures, inconsistent lighting/shadow directions within the same image
+Only flag what is actually visible — do not guess at AI generation from content alone. When genuinely uncertain whether something is a real tell, err toward flagging it rather than missing it — a false positive here just means a human double-checks, which is cheap; missing an actual reused/downloaded image is the expensive failure.
+
 Respond with ONLY a JSON object, no markdown formatting, no explanation, no preamble — just the raw JSON:
 
 {
@@ -87,10 +98,15 @@ Respond with ONLY a JSON object, no markdown formatting, no explanation, no prea
   "yearModel": string | null,
   "grossWeight": string | null,
   "ownerName": string | null,
-  "confidence": number
+  "confidence": number,
+  "sourceCheck": {
+    "suspicious": boolean,
+    "reasons": string[]
+  }
 }
 
-"confidence" is your overall confidence (0.0 to 1.0) in the fields you DID extract — not counting fields you returned as null.`;
+"confidence" is your overall confidence (0.0 to 1.0) in the fields you DID extract — not counting fields you returned as null.
+"sourceCheck.reasons" should list the specific visible evidence for each flag (e.g. "Visible Shutterstock watermark in the bottom-right corner"), not a generic statement. Empty array if nothing suspicious was visible.`;
 
 // ============================================================
 // Basic format sanity checks — per spec: "validated with basic format
@@ -147,9 +163,22 @@ export async function scanCOR(imageDataUrl: string, vehicleId?: string): Promise
     const fields = sanityCheck(result);
     const confidence = typeof result.confidence === "number" ? result.confidence : null;
 
+    const sourceCheck = result.sourceCheck as { suspicious?: boolean; reasons?: unknown } | undefined;
+    const sourceSuspicious = sourceCheck?.suspicious === true;
+    const sourceFlagReasons = Array.isArray(sourceCheck?.reasons)
+      ? sourceCheck.reasons.filter((r): r is string => typeof r === "string")
+      : [];
+
     const updated = await prisma.vehicleDocument.update({
       where: { id: doc.id },
-      data: { ...fields, confidence, rawResponse: result as any, status: "EXTRACTED" },
+      data: {
+        ...fields,
+        confidence,
+        rawResponse: result as any,
+        status: "EXTRACTED",
+        sourceSuspicious,
+        sourceFlagReasons,
+      },
     });
     return toDisplay(updated);
   } catch (err) {

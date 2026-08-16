@@ -49,6 +49,7 @@ export function CORScanButton({
   const [edited, setEdited] = useState<Fields | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
 
   async function handleCapture(dataUrl: string) {
     const result = await scanCOR(dataUrl, vehicleId);
@@ -58,6 +59,7 @@ export function CORScanButton({
     }
     setDoc(result);
     setEdited(result.fields);
+    setAcknowledged(false);
   }
 
   async function handleConfirm() {
@@ -104,6 +106,36 @@ export function CORScanButton({
           Double-check these — anything the scan couldn't read clearly is left blank.
         </p>
 
+        {doc.sourceSuspicious && (
+          <div className="rounded-xl bg-red-400/10 border border-red-400/20 p-3 space-y-2">
+            <p className="text-xs font-medium text-red-400 flex items-center gap-1.5">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                  stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              This photo may not be an original photo of your document
+            </p>
+            {doc.sourceFlagReasons.length > 0 && (
+              <ul className="text-[11px] text-red-300/80 list-disc list-inside space-y-0.5">
+                {doc.sourceFlagReasons.map((reason, i) => (
+                  <li key={i}>{reason}</li>
+                ))}
+              </ul>
+            )}
+            <label className="flex items-start gap-2 pt-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+                className="mt-0.5 accent-amber-400"
+              />
+              <span className="text-[11px] text-zinc-300">
+                I confirm this is a real photo of my own vehicle's registration document.
+              </span>
+            </label>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2">
           {(Object.keys(FIELD_LABELS) as (keyof Fields)[]).map((key) => (
             <div key={key} className="col-span-1">
@@ -137,7 +169,7 @@ export function CORScanButton({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={saving}
+            disabled={saving || (doc.sourceSuspicious && !acknowledged)}
             className="flex-1 rounded-xl bg-amber-400 text-zinc-900 text-xs font-semibold py-2 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Confirm"}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { shareShopLocation } from "@/app/actions/shop";
 import { BottomNav } from "../_shop-dashboard";
+import { DirectWalletSetup } from "@/components/payment/DirectWalletSetup";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -424,6 +425,8 @@ export default function ShopProfileView(props: ShopProfileProps) {
             )}
           </div>
         </div>
+
+        <DirectWalletSetup />
 
         <ShareShopLocationButton currentAddress={props.address} />
 

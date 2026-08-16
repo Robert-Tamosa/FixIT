@@ -6,8 +6,7 @@ import { ShopDashboardView } from "./_shop-dashboard";
 export default async function ShopDashboardPage() {
   const shop = await getMyShop();
   if (!shop) redirect("/shop/register");
-
-  const { stats, recentBookings } = await getShopOverview();
+  const { stats } = await getShopOverview();
 
   return (
     <ShopDashboardView
@@ -15,8 +14,6 @@ export default async function ShopDashboardPage() {
       shopAddress={shop.address}
       isVerified={shop.isVerified}
       stats={stats}
-      recentBookings={recentBookings}
-      mechanics={shop.mechanics}
     />
   );
 }
