@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getMessages, sendMessage, markMessagesRead, type DisplayMesage } from "@/app/actions/messages";
+import { getMessages, sendMessage, markMessagesRead, type DisplayMessage } from "@/app/actions/messages";
 interface ChatThreadProps {
   bookingId: string;
   otherPartyName: string;

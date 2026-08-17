@@ -99,24 +99,25 @@ export default async function AdminDashboardPage() {
 
   // ── 4. Recent bookings ─────────────────────────────────────────────────────
   const rawBookings = await prisma.booking.findMany({
-    take:    15,
-    orderBy: { createdAt: "desc" },
-    select: {
-      id:                 true,
-      status:             true,
-      problemDescription: true,
-      createdAt:          true,
-      owner:    { select: { name: true } },
-      mechanic: { select: { name: true } },
-      vehicle:  { select: { brand: true, model: true } },
-    },
-  });
+  take:    15,
+  orderBy: { createdAt: "desc" },
+  select: {
+    id:                 true,
+    status:             true,
+    problemDescription: true,
+    createdAt:          true,
+    owner:    { select: { name: true } },
+    mechanic: { select: { name: true } },
+    shop:     { select: { name: true } },   // ← this line was missing
+    vehicle:  { select: { brand: true, model: true } },
+  },
+});
 
   const recentBookings: RecentBooking[] = rawBookings.map((b) => ({
     id:                 b.id,
     status:             b.status,
     ownerName:          b.owner.name    ?? "Unknown Owner",
-    mechanicName:       b.mechanic.name ?? "Unknown Mechanic",
+    mechanicName: b.mechanic?.name ?? (b.shop?.name ? `${b.shop.name} (Shop)` : "Unassigned"),
     vehicleLabel:       `${b.vehicle.brand} ${b.vehicle.model}`,
     problemDescription: b.problemDescription,
     createdAt:          b.createdAt.toLocaleDateString("en-PH", {

@@ -1,6 +1,14 @@
-import { getInitials } from "@/app/dashboard/owner/_dashboard";
 import { SessionUser } from "@/types";
 import { useState } from "react";
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
 
 export default function Header({ user }: { user: SessionUser }) {
   const h = new Date().getHours();

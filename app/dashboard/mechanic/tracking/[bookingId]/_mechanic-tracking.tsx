@@ -218,7 +218,8 @@ export default function MechanicTrackingView({
   // request, hasn't sent a price yet," which was previously (incorrectly)
   // treated as trackable, showing this page's live banner before travel
   // was even possible to start.
-  const isActive = ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"].includes(currentStatus);
+  const isTracking  = currentStatus === "EN_ROUTE" || currentStatus === "IN_PROGRESS";
+  const isPreTravel = currentStatus === "ESTIMATE_ACCEPTED";
   const statusCfg = STATUS_CONFIG[currentStatus] ?? STATUS_CONFIG.ESTIMATE_ACCEPTED;
 
   const pushLocation = useCallback(async (lat: number, lng: number) => {
@@ -341,10 +342,10 @@ export default function MechanicTrackingView({
   }, [currentStatus]);
 
   // Auto-stop once the job is no longer active — no manual control exists,
-  // so this is the only thing that ends sharing besides unmounting.
-  useEffect(() => {
-    if (!isActive && sharing) stopSharing();
-  }, [isActive]);
+// so this is the only thing that ends sharing besides unmounting.
+useEffect(() => {
+  if (!isTracking && sharing) stopSharing();
+}, [isTracking]);
 
   useEffect(() => () => stopSharing(), []);
 
@@ -389,8 +390,12 @@ export default function MechanicTrackingView({
             <p className="text-xs text-zinc-500">{vehicleLabel} · {ownerName}</p>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${isActive ? "bg-emerald-400 animate-pulse" : "bg-zinc-600"}`} />
-            <span className="text-[11px] text-zinc-500">{isActive ? "Live" : "Ended"}</span>
+            <span className={`w-2 h-2 rounded-full ${
+            isTracking ? "bg-emerald-400 animate-pulse" : isPreTravel ? "bg-amber-400" : "bg-zinc-600"
+            }`} />
+            <span className="text-[11px] text-zinc-500">
+            {isTracking ? "Live" : isPreTravel ? "Not started" : "Ended"}
+            </span>
           </div>
         </div>
 
@@ -427,15 +432,20 @@ export default function MechanicTrackingView({
         )}
 
         {/* Sharing status — automatic, no manual control needed */}
-        {isActive && (
+        {isTracking && (
           <p className="text-center text-sm font-medium text-zinc-400 mb-4">
-            {sharing ? "📍 Location sharing active" : "Waiting to start location sharing…"}
-          </p>
-        )}
+             {sharing ? "📍 Location sharing active" : "Waiting to start location sharing…"}
+           </p>
+           )}
+            {isPreTravel && (
+            <p className="text-center text-sm font-medium text-zinc-500 mb-4">
+              Tracking starts once you head out
+            </p>
+          )}
 
         {/* Stats — iconed cards, matching owner's */}
-        {isActive && (
-          <div className="grid grid-cols-3 gap-2.5 mb-4">
+        {isTracking && (
+            <div className="grid grid-cols-3 gap-2.5 mb-4">
             {[
               {
                 label: "ETA", value: eta ?? "—",
@@ -469,25 +479,38 @@ export default function MechanicTrackingView({
         )}
 
         {/* Map — or a completed-state card when the job has ended, matching owner's */}
-        {isActive ? (
-          <TrackingMap
-            mechanicLat={myLat}
-            mechanicLng={myLng}
-            ownerLat={ownerLat}
-            ownerLng={ownerLng}
-            geofenceRadius={GEOFENCE_DISPLAY_RADIUS}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 gap-3
-            rounded-2xl border border-white/[0.07] bg-white/[0.02]">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M20 6L9 17l-5-5" stroke="#34D399" strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <p className="text-sm font-semibold text-zinc-300">Service Completed</p>
-            <p className="text-xs text-zinc-500">Location tracking has ended</p>
-          </div>
-        )}
+        {isTracking ? (
+            <TrackingMap
+              mechanicLat={myLat}
+              mechanicLng={myLng}
+              ownerLat={ownerLat}
+              ownerLng={ownerLng}
+              geofenceRadius={GEOFENCE_DISPLAY_RADIUS}
+            />
+          ) : isPreTravel ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3
+              rounded-2xl border border-white/[0.07] bg-white/[0.02]">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"
+                  stroke="#F59E0B" strokeWidth="1.6" />
+                <circle cx="12" cy="10" r="3" stroke="#F59E0B" strokeWidth="1.6" />
+              </svg>
+              <p className="text-sm font-semibold text-zinc-300">Ready to head out</p>
+              <p className="text-xs text-zinc-500 text-center px-6">
+                Location sharing will begin automatically once you mark yourself En Route.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 gap-3
+              rounded-2xl border border-white/[0.07] bg-white/[0.02]">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M20 6L9 17l-5-5" stroke="#34D399" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <p className="text-sm font-semibold text-zinc-300">Service Completed</p>
+              <p className="text-xs text-zinc-500">Location tracking has ended</p>
+            </div>
+          )}
 
         {/* Customer info card — matches owner's mechanic info card treatment */}
         <div className="mt-4 flex items-center gap-3 px-4 py-3.5 rounded-2xl
