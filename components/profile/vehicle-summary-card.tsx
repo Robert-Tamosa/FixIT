@@ -91,7 +91,7 @@ function AddVehicleModal({
   return (
     /* Backdrop */
     <div
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center
+      className="fixed inset-0 z-[60] flex items-center sm:items-center justify-center
         bg-black/70 backdrop-blur-sm px-4 pb-4 sm:pb-0"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       role="dialog" aria-modal="true" aria-label="Add vehicle"

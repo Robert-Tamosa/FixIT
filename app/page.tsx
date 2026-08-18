@@ -28,40 +28,43 @@ return ( <div className="min-h-screen bg-[#080909] text-zinc-100 overflow-hidden
 
   {/* navbar */}
   <nav className="relative z-20 border-b border-white/[0.06]">
-    <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
+  <div className="max-w-7xl mx-auto px-4 sm:px-8 h-16 sm:h-20 flex items-center justify-between">
 
-      <h1 className="text-3xl font-black">
-        Fix<span className="text-amber-400">IT</span>
-      </h1>
+    <h1 className="text-xl sm:text-3xl font-black shrink-0">
+      Fix<span className="text-amber-400">IT</span>
+    </h1>
 
-      <div className="flex items-center gap-4">
-        <Link
-          href="/signIn"
-          className="
-            px-5 py-2.5
-            text-zinc-400
-            hover:text-zinc-100
-            transition
-          "
-        >
-          Sign In
-        </Link>
+    <div className="flex items-center gap-2 sm:gap-4">
+      <Link
+        href="/signIn"
+        className="
+          px-3 py-2 sm:px-5 sm:py-2.5
+          text-sm sm:text-base
+          text-zinc-400
+          hover:text-zinc-100
+          transition
+        "
+      >
+        Sign In
+      </Link>
 
-        <Link
-          href="/signUp"
-          className="
-            px-5 py-2.5
-            rounded-xl
-            bg-amber-400
-            text-[#080909]
-            font-semibold
-          "
-        >
-          Sign Up
-        </Link>
-      </div>
+      <Link
+        href="/signUp"
+        className="
+          px-3.5 py-2 sm:px-5 sm:py-2.5
+          text-sm sm:text-base
+          rounded-xl
+          bg-amber-400
+          text-[#080909]
+          font-semibold
+          whitespace-nowrap
+        "
+      >
+        Sign Up
+      </Link>
     </div>
-  </nav>
+  </div>
+</nav>
 
   {/* Hero */}
   <section className="relative z-10">
