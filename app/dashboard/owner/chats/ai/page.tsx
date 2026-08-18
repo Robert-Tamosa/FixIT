@@ -397,45 +397,53 @@ export default function AIDiagnosticsChatPage() {
   }
 
   async function handleInspectPhoto() {
-    if (!photoPreview || inspecting) return;
-    const dataUrl = photoPreview;
-    setPhotoPreview(null);
+  if (!photoPreview || inspecting) return;
+  const dataUrl = photoPreview;
+  setPhotoPreview(null);
 
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: "Photo for parts inspection",
-      photo: dataUrl,
-    };
-    const loadingMsg: Message = { id: "loading-inspect", role: "assistant", content: "", loading: true };
-    setMessages((prev) => [...prev, userMsg, loadingMsg]);
-    setInspecting(true);
+  const userMsg: Message = {
+    id: Date.now().toString(),
+    role: "user",
+    content: "Photo for parts inspection",
+    photo: dataUrl,
+  };
+  const loadingMsg: Message = { id: "loading-inspect", role: "assistant", content: "", loading: true };
+  setMessages((prev) => [...prev, userMsg, loadingMsg]);
+  setInspecting(true);
 
-    try {
-      const result: InspectionResult = await inspectVehicleParts(dataUrl, {});
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== "loading-inspect"),
-        {
-          id: Date.now().toString() + "-flags",
-          role: "assistant",
-          content: "",
-          inspectionFlags: result.flags,
-          sourceWarning: result.sourceWarning,
-        },
-      ]);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev.filter((m) => m.id !== "loading-inspect"),
-        {
-          id: Date.now().toString() + "-err",
-          role: "assistant",
-          content: err instanceof Error ? err.message : "Couldn't analyze this photo. Please try again.",
-        },
-      ]);
-    } finally {
-      setInspecting(false);
-    }
+  try {
+    const res = await fetch("/api/inspect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    const result: InspectionResult = data.result;
+
+    setMessages((prev) => [
+      ...prev.filter((m) => m.id !== "loading-inspect"),
+      {
+        id: Date.now().toString() + "-flags",
+        role: "assistant",
+        content: "",
+        inspectionFlags: result.flags,
+        sourceWarning: result.sourceWarning,
+      },
+    ]);
+  } catch (err) {
+    setMessages((prev) => [
+      ...prev.filter((m) => m.id !== "loading-inspect"),
+      {
+        id: Date.now().toString() + "-err",
+        role: "assistant",
+        content: err instanceof Error ? err.message : "Couldn't analyze this photo. Please try again.",
+      },
+    ]);
+  } finally {
+    setInspecting(false);
   }
+}
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
