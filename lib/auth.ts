@@ -4,10 +4,12 @@ import { prisma } from "./prisma";
 import { twoFactor } from "better-auth/plugins";
 import { sendOTPViaSMS } from "./twilio";
 
-console.log("Google ID exists:", !!process.env.GOOGLE_CLIENT_ID);
-console.log("Google Secret exists:", !!process.env.GOOGLE_CLIENT_SECRET);
-
 export const auth = betterAuth({
+  baseURL: process.env.BETTER_AUTH_URL,
+  trustedOrigins: [
+    "http://localhost:3000",
+    process.env.BETTER_AUTH_URL ?? "",
+  ].filter(Boolean),
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
@@ -37,7 +39,6 @@ export const auth = betterAuth({
       otpOptions: {
         async sendOTP({ user, otp }) {
           if (process.env.NODE_ENV === "development") {
-            // DEV: check your Next.js terminal for the code — no SMS sent
             console.log(`\n🔐 [FixIT DEV] OTP for ${user.email}: ${otp}\n`);
           } else {
             const phone = (user as { phone?: string | null }).phone;
