@@ -360,6 +360,56 @@ function OnlinePendingPanel({
 
 // ── Direct-to-wallet pending — new ────────────────────────────────────────
 
+// ============================================================
+// REPLACE the DirectPendingPanel function in PaymentMethodCard.tsx with
+// this version — adds a "Save QR to Photos" button above the QR image.
+// ============================================================
+
+async function saveQrImage(dataUri: string, filename: string): Promise<"shared" | "downloaded" | "failed"> {
+  try {
+    const res = await fetch(dataUri);
+    const blob = await res.blob();
+    const file = new File([blob], filename, { type: blob.type || "image/png" });
+
+    // navigator.share/canShare with a `files` array is Web Share API Level 2
+    // — well supported on modern iOS Safari and Chrome Android, which is
+    // what actually gives a real native "Save Image" option in the share
+    // sheet. Cast to `any` since some TS lib.dom versions don't include the
+    // `files` field on ShareData yet — this is a runtime feature-check
+    // either way, so the cast doesn't weaken the actual safety here.
+    const nav = navigator as any;
+    if (typeof nav.share === "function" && nav.canShare?.({ files: [file] })) {
+      try {
+        await nav.share({ files: [file] });
+        return "shared";
+      } catch {
+        // AbortError (user cancelled the share sheet) or a share failure —
+        // either way, don't also trigger a fallback download on top of it;
+        // that would be a confusing double-prompt.
+        return "shared";
+      }
+    }
+  } catch {
+    // blob/file construction failed — fall through to the download link
+  }
+
+  // Fallback for browsers without Web Share file support (older iOS Safari,
+  // most desktop browsers). Works reliably on Android Chrome and desktop;
+  // on unsupported iOS versions this may just open the image in a new tab
+  // instead of downloading — the long-press hint in the UI covers that case.
+  try {
+    const a = document.createElement("a");
+    a.href = dataUri;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return "downloaded";
+  } catch {
+    return "failed";
+  }
+}
+
 function DirectPendingPanel({
   payment,
   busy,
@@ -372,6 +422,15 @@ function DirectPendingPanel({
   onSwitchToCash: () => void;
 }) {
   const providerLabel = payment.method === "GCASH_DIRECT" ? "GCash" : "Maya";
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "failed">("idle");
+
+  async function handleSave() {
+    if (!payment.directQrImage) return;
+    setSaveState("saving");
+    const filename = `${providerLabel.toLowerCase()}-qr.png`;
+    const result = await saveQrImage(payment.directQrImage, filename);
+    setSaveState(result === "failed" ? "failed" : "idle");
+  }
 
   return (
     <div className="space-y-3">
@@ -394,8 +453,30 @@ function DirectPendingPanel({
         </div>
       )}
 
+      {payment.directQrImage && (
+        <button
+          onClick={handleSave}
+          disabled={saveState === "saving"}
+          className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/[0.08]
+            text-zinc-300 text-xs font-medium py-2.5 disabled:opacity-50"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
+              stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {saveState === "saving" ? "Saving…" : "Save QR to Photos"}
+        </button>
+      )}
+
+      {saveState === "failed" && (
+        <p className="text-[11px] text-red-400 text-center">
+          Couldn't save automatically — press and hold the QR code above and choose "Save Image."
+        </p>
+      )}
+
       <p className="text-[11px] text-zinc-600 text-center leading-relaxed">
         Scan this in your {providerLabel} app and enter the exact amount above — this QR doesn't have the amount pre-filled.
+        If you're viewing this on the same phone you'll pay from, save the QR first, then use "Scan from Gallery" inside {providerLabel}.
       </p>
 
       {payment.ownerMarkedSentAt ? (
