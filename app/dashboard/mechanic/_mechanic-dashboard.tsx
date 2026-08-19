@@ -959,6 +959,8 @@ const NEXT_LABEL: Record<string, string> = {
 // keeps ActiveJobCard from needing payment fields threaded all the way
 // through the props chain. Only rendered for DONE jobs.
 
+const MANUALLY_CONFIRMED = ["CASH", "GCASH_DIRECT", "MAYA_DIRECT"];
+
 function JobPaymentStrip({ bookingId }: { bookingId: string }) {
   const [payment, setPayment] = useState<DisplayPayment | null>(null);
   const [loading, setLoading] = useState(true);
@@ -977,18 +979,25 @@ function JobPaymentStrip({ bookingId }: { bookingId: string }) {
   }
 
   if (payment?.status === "PAID") {
-    // Shouldn't normally appear here — doneUnpaidJobs is queried to exclude
-    // paid bookings — but shown defensively in case of a stale poll.
     return (
       <div className="px-3 py-2.5 rounded-xl bg-emerald-400/10 border border-emerald-400/20
         text-xs font-semibold text-emerald-400 text-center">
-        Paid {payment.method === "CASH" ? "in cash" : `via ${payment.paidVia ?? "online"}`}
+        Paid {payment.method === "CASH" ? "in cash" : payment.method === "GCASH_DIRECT" ? "directly via GCash" : payment.method === "MAYA_DIRECT" ? "directly via Maya" : `via ${payment.paidVia ?? "online"}`}
       </div>
     );
   }
 
-  if (payment?.method === "CASH" && payment.status === "PENDING") {
-    return <ConfirmCashPaymentButton bookingId={bookingId} />;
+  if (payment?.method && MANUALLY_CONFIRMED.includes(payment.method) && payment.status === "PENDING") {
+    return (
+      <div className="space-y-2">
+        {payment.ownerMarkedSentAt && (payment.method === "GCASH_DIRECT" || payment.method === "MAYA_DIRECT") && (
+          <p className="text-[11px] text-amber-400 text-center">
+            Owner marked this as sent — check your {payment.method === "GCASH_DIRECT" ? "GCash" : "Maya"} account.
+          </p>
+        )}
+        <ConfirmCashPaymentButton bookingId={bookingId} method={payment.method as "CASH" | "GCASH_DIRECT" | "MAYA_DIRECT"} />
+      </div>
+    );
   }
 
   if (payment?.method === "ONLINE" && payment.status === "PENDING") {
@@ -1001,7 +1010,7 @@ function JobPaymentStrip({ bookingId }: { bookingId: string }) {
   }
 
   // No payment row / no method chosen yet — owner hasn't picked cash vs
-  // online in their invoice card.
+  // online vs direct in their invoice card.
   return (
     <div className="px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.07]
       text-xs text-zinc-500 text-center">

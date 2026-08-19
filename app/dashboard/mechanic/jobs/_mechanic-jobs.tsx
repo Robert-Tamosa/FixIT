@@ -79,6 +79,9 @@ function StarRating({ value }: { value: number }) {
 // whatever page.tsx currently populates the jobs list server-side.
 // Only rendered for DONE jobs (see JobCard below), so the extra fetch only
 // fires for a small, already-filtered subset of the list.
+
+const MANUALLY_CONFIRMED = ["CASH", "GCASH_DIRECT", "MAYA_DIRECT"];
+
 function PaymentStatusStrip({ bookingId }: { bookingId: string }) {
   const [payment, setPayment] = useState<DisplayPayment | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,15 +102,20 @@ function PaymentStatusStrip({ bookingId }: { bookingId: string }) {
     return (
       <div className="mb-3 px-3 py-2 rounded-xl bg-emerald-400/10 border border-emerald-400/20
         text-[11px] font-semibold text-emerald-400 text-center">
-        Paid {payment.method === "CASH" ? "in cash" : `via ${payment.paidVia ?? "online"}`}
+        Paid {payment.method === "CASH" ? "in cash" : payment.method === "GCASH_DIRECT" ? "directly via GCash" : payment.method === "MAYA_DIRECT" ? "directly via Maya" : `via ${payment.paidVia ?? "online"}`}
       </div>
     );
   }
 
-  if (payment.method === "CASH" && payment.status === "PENDING") {
+  if (MANUALLY_CONFIRMED.includes(payment.method) && payment.status === "PENDING") {
     return (
-      <div className="mb-3">
-        <ConfirmCashPaymentButton bookingId={bookingId} />
+      <div className="mb-3 space-y-2">
+        {payment.ownerMarkedSentAt && (payment.method === "GCASH_DIRECT" || payment.method === "MAYA_DIRECT") && (
+          <p className="text-[11px] text-amber-400 text-center">
+            Owner marked this as sent — check your {payment.method === "GCASH_DIRECT" ? "GCash" : "Maya"} account.
+          </p>
+        )}
+        <ConfirmCashPaymentButton bookingId={bookingId} method={payment.method as "CASH" | "GCASH_DIRECT" | "MAYA_DIRECT"} />
       </div>
     );
   }

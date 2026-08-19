@@ -87,65 +87,40 @@ export function AuthForm({ mode }: AuthFormProps) {
   return (
     <div className="relative min-h-screen bg-[#080909] flex flex-col overflow-hidden">
 
-        <nav className="relative z-20 w-full border-b border-white/[0.06] bg-[#080909]/80 backdrop-blur-xl">
-  <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
-
-    {/* Logo */}
-    <Link href="/" className="flex items-center gap-3">
-      <div
-        className="w-10 h-10 rounded-xl bg-amber-400/10
-        border border-amber-400/20 flex items-center justify-center"
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <path
-            d="M10 2L4 4.5V10.5C4 14.7 6.8 18.5 10 19.5C13.2 18.5 16 14.7 16 10.5V4.5L10 2Z"
-            fill="#F59E0B"
-            fillOpacity="0.2"
-            stroke="#F59E0B"
-            strokeWidth="1.2"
-          />
-          <path
-            d="M7.5 10.5L9.5 12.5L13.5 8.5"
-            stroke="#F59E0B"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </div>
-
-      <span className="text-3xl font-black text-zinc-100">
-        Fix<span className="text-amber-400">IT</span>
-      </span>
-    </Link>
-
-    {/* navigation */}
-    <div className="flex items-center gap-3">
-      <Link
-        href="/signIn"
-        className={`px-6 py-2.5 rounded-xl font-semibold transition-all ${
-          !isSignUp
-            ? "bg-amber-400 text-[#080909]"
-            : "text-zinc-400 hover:text-zinc-100"
-        }`}
-      >
-        Sign In
-      </Link>
-
-      <Link
-        href="/signUp"
-        className={`px-6 py-2.5 rounded-xl font-semibold transition-all ${
-          isSignUp
-            ? "bg-amber-400 text-[#080909]"
-            : "text-zinc-400 hover:text-zinc-100"
-        }`}
-      >
-        Sign Up
-      </Link>
-    </div>
-
-  </div>
-</nav>
+          <nav className="relative z-20 w-full border-b border-white/[0.06] bg-[#080909]/80 backdrop-blur-xl">
+            <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
+          
+              {/* Logo */}
+              <Link href="/" className="flex items-center gap-3">
+                <div
+          className="w-10 h-10 rounded-xl bg-amber-400/10
+          border border-amber-400/20 flex items-center justify-center"
+                >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path
+              d="M10 2L4 4.5V10.5C4 14.7 6.8 18.5 10 19.5C13.2 18.5 16 14.7 16 10.5V4.5L10 2Z"
+              fill="#F59E0B"
+              fillOpacity="0.2"
+              stroke="#F59E0B"
+              strokeWidth="1.2"
+            />
+            <path
+              d="M7.5 10.5L9.5 12.5L13.5 8.5"
+              stroke="#F59E0B"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+                </div>
+          
+                <span className="text-3xl font-black text-zinc-100">
+          Fix<span className="text-amber-400">IT</span>
+                </span>
+              </Link>
+          
+            </div>
+          </nav>
 
       {/* ── Ambient background ──────────────────────────────────────────────── */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">
