@@ -181,7 +181,7 @@ export function CORScanButton({
 
   return (
     <div>
-      <CameraCaptureButton actionLabel="Scan COR" onCapture={handleCapture} />
+      <CameraCaptureButton actionLabel="Scan COR" onCapture={handleCapture} maxDimension={2000} />
       {error && !doc && (
         <p className="text-xs text-red-400 mt-1">{error}</p>
       )}

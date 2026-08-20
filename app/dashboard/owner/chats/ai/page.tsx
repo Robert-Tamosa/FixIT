@@ -4,6 +4,42 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { inspectVehicleParts, type DisplayInspectionFlag, type InspectionResult } from "@/app/actions/inspection";
 
+/**
+ * Same resize logic as CameraCaptureButton.tsx — duplicated here rather
+ * than imported, since this page handles its own file input inline instead
+ * of using that shared component (kept that way for tighter control over
+ * the chat bubble layout). Downscales before sending so a full-res phone
+ * photo's base64 data URL doesn't trip Next.js Server Actions' 1MB default
+ * body limit — that failure shows up client-side as something trying to
+ * JSON.parse a plain-text 413 rejection, not a clean error message.
+ */
+function resizeImage(dataUrl: string, maxDimension = 1600, quality = 0.85): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height / width) * maxDimension);
+          width = maxDimension;
+        } else {
+          width = Math.round((width / height) * maxDimension);
+          height = maxDimension;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Message {
@@ -326,6 +362,7 @@ export default function AIDiagnosticsChatPage() {
   const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
   const [loading,   setLoading]   = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [processingPhoto, setProcessingPhoto] = useState(false);
   const [inspecting, setInspecting] = useState(false);
   const bottomRef  = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLTextAreaElement>(null);
@@ -387,63 +424,65 @@ export default function AIDiagnosticsChatPage() {
     }
   }
 
-  function handlePhotoSelected(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handlePhotoSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPhotoPreview(reader.result as string);
-    reader.readAsDataURL(file);
+    setProcessingPhoto(true);
+    try {
+      const raw: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Couldn't read the photo"));
+        reader.readAsDataURL(file);
+      });
+      const resized = await resizeImage(raw);
+      setPhotoPreview(resized);
+    } finally {
+      setProcessingPhoto(false);
+    }
   }
 
   async function handleInspectPhoto() {
-  if (!photoPreview || inspecting) return;
-  const dataUrl = photoPreview;
-  setPhotoPreview(null);
+    if (!photoPreview || inspecting) return;
+    const dataUrl = photoPreview;
+    setPhotoPreview(null);
 
-  const userMsg: Message = {
-    id: Date.now().toString(),
-    role: "user",
-    content: "Photo for parts inspection",
-    photo: dataUrl,
-  };
-  const loadingMsg: Message = { id: "loading-inspect", role: "assistant", content: "", loading: true };
-  setMessages((prev) => [...prev, userMsg, loadingMsg]);
-  setInspecting(true);
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: "Photo for parts inspection",
+      photo: dataUrl,
+    };
+    const loadingMsg: Message = { id: "loading-inspect", role: "assistant", content: "", loading: true };
+    setMessages((prev) => [...prev, userMsg, loadingMsg]);
+    setInspecting(true);
 
-  try {
-    const res = await fetch("/api/inspect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataUrl }),
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    const result: InspectionResult = data.result;
-
-    setMessages((prev) => [
-      ...prev.filter((m) => m.id !== "loading-inspect"),
-      {
-        id: Date.now().toString() + "-flags",
-        role: "assistant",
-        content: "",
-        inspectionFlags: result.flags,
-        sourceWarning: result.sourceWarning,
-      },
-    ]);
-  } catch (err) {
-    setMessages((prev) => [
-      ...prev.filter((m) => m.id !== "loading-inspect"),
-      {
-        id: Date.now().toString() + "-err",
-        role: "assistant",
-        content: err instanceof Error ? err.message : "Couldn't analyze this photo. Please try again.",
-      },
-    ]);
-  } finally {
-    setInspecting(false);
+    try {
+      const result: InspectionResult = await inspectVehicleParts(dataUrl, {});
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== "loading-inspect"),
+        {
+          id: Date.now().toString() + "-flags",
+          role: "assistant",
+          content: "",
+          inspectionFlags: result.flags,
+          sourceWarning: result.sourceWarning,
+        },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== "loading-inspect"),
+        {
+          id: Date.now().toString() + "-err",
+          role: "assistant",
+          content: err instanceof Error ? err.message : "Couldn't analyze this photo. Please try again.",
+        },
+      ]);
+    } finally {
+      setInspecting(false);
+    }
   }
-}
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -582,18 +621,22 @@ export default function AIDiagnosticsChatPage() {
             <button
               type="button"
               onClick={() => setCaptureMenuOpen((v) => !v)}
-              disabled={loading || inspecting}
+              disabled={loading || inspecting || processingPhoto}
               aria-label="Add a photo for parts inspection"
               aria-expanded={captureMenuOpen}
               className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/[0.08]
                 flex items-center justify-center hover:bg-white/[0.07] transition-colors
                 disabled:opacity-40 shrink-0"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-                  stroke="#F59E0B" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                <circle cx="12" cy="13" r="4" stroke="#F59E0B" strokeWidth="1.6" />
-              </svg>
+              {processingPhoto ? (
+                <span className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-amber-400 animate-spin" />
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+                    stroke="#F59E0B" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="12" cy="13" r="4" stroke="#F59E0B" strokeWidth="1.6" />
+                </svg>
+              )}
             </button>
 
             {captureMenuOpen && (
