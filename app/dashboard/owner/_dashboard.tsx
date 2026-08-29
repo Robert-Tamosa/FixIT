@@ -840,14 +840,16 @@ function NearbyMechanicsSection({
 }: {
   mechanics: DisplayMechanic[];
 }) {
-  if (mechanics.length === 0) {
+  const available = mechanics.filter((m) => m.available);
+
+  if (available.length === 0) {
     return (
       <div className="mb-4">
         <span className="text-sm font-semibold text-zinc-100 block mb-3">
           Nearby Mechanics
         </span>
         <p className="text-sm text-zinc-600 text-center py-6">
-          No mechanics found.
+          No mechanics available right now.
         </p>
       </div>
     );
@@ -859,7 +861,7 @@ function NearbyMechanicsSection({
         <span className="text-sm font-semibold text-zinc-100">
           Nearby Mechanics
           <span className="ml-2 text-[11px] font-normal text-zinc-500">
-            {mechanics.filter((m) => m.available).length} available
+            {available.length} available
           </span>
         </span>
         <button className="text-xs text-amber-400 hover:text-amber-300 transition-colors">
@@ -868,7 +870,7 @@ function NearbyMechanicsSection({
       </div>
 
       <div className="flex flex-col gap-2.5">
-        {mechanics.map((m) => (
+        {available.map((m) => (
           <button
             key={m.id}
             className="flex items-center gap-3.5 w-full text-left

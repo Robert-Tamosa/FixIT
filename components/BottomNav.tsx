@@ -1,7 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   {
@@ -28,11 +27,20 @@ const NAV_ITEMS = [
 
 export function BottomNav() {
   const router = useRouter();
-  const [active, setActive] = useState<string>("Home");
+  const pathname = usePathname();
 
-  function handleNav(label: string, href: string) {
-    setActive(label);
-    router.push(href);
+  // Active tab derived from the real URL, not click-tracked state — the
+  // old version used useState("Home") set only on click, so a fresh page
+  // load (or back/forward navigation) always showed Home as active
+  // regardless of the actual current route, until you clicked something
+  // else in that session.
+  function isActive(href: string) {
+    // Exact match for Home specifically — every other tab's route is
+    // nested under it (/dashboard/owner is a literal prefix of
+    // /dashboard/owner/bookings etc.), so prefix-matching alone would make
+    // Home look active on every single owner page.
+    if (href === "/dashboard/owner") return pathname === href;
+    return pathname === href || pathname.startsWith(href + "/");
   }
 
   return (
@@ -41,20 +49,20 @@ export function BottomNav() {
       bg-[#080909]/95 backdrop-blur-xl border-t border-white/[0.06]">
       <div className="max-w-2xl mx-auto flex items-center justify-around px-2 py-3 pb-5">
         {NAV_ITEMS.map(({ label, href, icon }) => {
-          const isActive = active === label;
+          const active = isActive(href);
           return (
             <button
               key={label}
               aria-label={label}
-              aria-current={isActive ? "page" : undefined}
-              onClick={() => handleNav(label, href)}
+              aria-current={active ? "page" : undefined}
+              onClick={() => router.push(href)}
               className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl transition-all active:scale-95">
               <svg
                 width="22"
                 height="22"
                 viewBox="0 0 24 24"
                 fill="none"
-                stroke={isActive ? "#F59E0B" : "#52525B"}
+                stroke={active ? "#F59E0B" : "#52525B"}
                 strokeWidth="1.7"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -62,7 +70,7 @@ export function BottomNav() {
                 <path d={icon} />
               </svg>
               <span
-                className={`text-[10px] font-medium leading-none ${isActive ? "text-amber-400" : "text-zinc-600"}`}>
+                className={`text-[10px] font-medium leading-none ${active ? "text-amber-400" : "text-zinc-600"}`}>
                 {label}
               </span>
             </button>

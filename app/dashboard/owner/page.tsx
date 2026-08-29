@@ -134,40 +134,45 @@ export default async function OwnerDashboardPage() {
     orderBy: { updatedAt: "desc" },
   });
 
-  // ── 2. Mechanics list ──────────────────────────────────────────────────────
-  const rawMechanics = await prisma.user.findMany({
-    where: { role: "MECHANIC" },
-    select: {
-      id:   true,
-      name: true,
-      mechanicProfile: {
-        select: { specialization: true, isVerified: true },
-      },
-      _count: { select: { ratingsReceived: true } },
+const MECHANIC_DISPLAY_LIMIT = 6;
+const candidateLimit = MECHANIC_DISPLAY_LIMIT * 3;
+ 
+const rawMechanics = await prisma.user.findMany({
+  where: {
+    role: "MECHANIC",
+    mechanicProfile: { isAvailable: true }, // NEW — excludes toggled-off mechanics at the query level
+  },
+  select: {
+    id:   true,
+    name: true,
+    mechanicProfile: {
+      select: { specialization: true, isVerified: true, isAvailable: true }, // isAvailable added
     },
-    take: 6,
-  });
-
-  // ── 3. Average ratings per mechanic ───────────────────────────────────────
-  const mechanicIds = rawMechanics.map((m) => m.id);
-
-  const avgRatings = await prisma.mechanicRating.groupBy({
-    by: ["mechanicId"],
-    where: { mechanicId: { in: mechanicIds } },
-    _avg: { rating: true },
-  });
-  const ratingMap = new Map(avgRatings.map((r) => [r.mechanicId, r._avg.rating ?? 0]));
-
-  // ── 4. Which mechanics are currently busy ──────────────────────────────────
-  const busyIds = await prisma.booking
-    .findMany({
-      where: {
-        mechanicId: { in: mechanicIds },
-        status: { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"] },
-      },
-      select: { mechanicId: true },
-    })
-    .then((rows) => new Set(rows.map((r) => r.mechanicId)));
+    _count: { select: { ratingsReceived: true } },
+  },
+  take: candidateLimit,
+});
+ 
+// ── 3. Average ratings per mechanic ───────────────────────────────────────
+const mechanicIds = rawMechanics.map((m) => m.id);
+ 
+const avgRatings = await prisma.mechanicRating.groupBy({
+  by: ["mechanicId"],
+  where: { mechanicId: { in: mechanicIds } },
+  _avg: { rating: true },
+});
+const ratingMap = new Map(avgRatings.map((r) => [r.mechanicId, r._avg.rating ?? 0]));
+ 
+// ── 4. Which mechanics are currently busy ──────────────────────────────────
+const busyIds = await prisma.booking
+  .findMany({
+    where: {
+      mechanicId: { in: mechanicIds },
+      status: { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"] },
+    },
+    select: { mechanicId: true },
+  })
+  .then((rows) => new Set(rows.map((r) => r.mechanicId)));
 
   // ── Transform → display types ──────────────────────────────────────────────
 
@@ -175,14 +180,17 @@ export default async function OwnerDashboardPage() {
     ? toDisplayBooking(rawBooking, ratingMap)
     : null;
 
-  const mechanics: DisplayMechanic[] = rawMechanics.map((m) => ({
+const mechanics: DisplayMechanic[] = rawMechanics
+  .filter((m) => !busyIds.has(m.id)) // isAvailable=true already guaranteed by the query above; this catches "on but currently busy"
+  .slice(0, MECHANIC_DISPLAY_LIMIT)
+  .map((m) => ({
     id:        m.id,
     name:      m.name ?? "Unknown",
     initials:  getInitials(m.name),
     specialty: m.mechanicProfile?.specialization ?? "General Mechanic",
     rating:    Math.round((ratingMap.get(m.id) ?? 0) * 10) / 10,
     reviews:   m._count.ratingsReceived,
-    available: !busyIds.has(m.id),
+    available: true,
   }));
 
   const pendingDisplay: DisplayBooking | null = pendingBooking

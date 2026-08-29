@@ -5,7 +5,6 @@ import { redirect } from "next/navigation";
 import CompletedBookingsView, {
   type CompletedBooking,
 } from "./_completed-bookings";
-import { BottomNav } from "@/components/BottomNav";
 
 function formatPrice(price: unknown): string {
   if (!price) return "TBD";

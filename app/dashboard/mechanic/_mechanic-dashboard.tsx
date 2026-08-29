@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { usePolling } from "@/app/hooks/usePolling";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   acceptBooking,
   declineBooking,
@@ -1680,43 +1680,36 @@ const NAV_ITEMS = [
 
 export function BottomNav() {
   const router = useRouter();
-  const [active, setActive] = useState<string>("Home");
+  const pathname = usePathname();
 
-  function handleNav(label: string, href: string) {
-    setActive(label);
-    router.push(href);
+  function isActive(href: string) {
+    if (href === "/dashboard/mechanic") return pathname === href;
+    return pathname === href || pathname.startsWith(href + "/");
   }
 
   return (
-    <nav
-      className="fixed bottom-0 left-0 right-0 z-50
+    <nav className="fixed bottom-0 left-0 right-0 z-50
       bg-[#080909]/95 backdrop-blur-xl border-t border-white/[0.06]">
       <div className="max-w-2xl mx-auto flex items-center justify-around px-2 py-3 pb-5">
         {NAV_ITEMS.map(({ label, href, icon }) => {
-          const isActive = active === label;
+          const active = isActive(href);
           return (
             <button
               key={label}
               aria-label={label}
-              aria-current={isActive ? "page" : undefined}
-              onClick={() => handleNav(label, href)}
+              aria-current={active ? "page" : undefined}
+              onClick={() => router.push(href)}
               className="flex flex-col items-center gap-1.5 px-4 py-1 rounded-xl
                 transition-all active:scale-95">
               <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke={isActive ? "#F59E0B" : "#52525B"}
-                strokeWidth="1.7"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                width="22" height="22" viewBox="0 0 24 24" fill="none"
+                stroke={active ? "#F59E0B" : "#52525B"}
+                strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
                 aria-hidden="true">
                 <path d={icon} />
               </svg>
-              <span
-                className={`text-[10px] font-medium leading-none
-                ${isActive ? "text-amber-400" : "text-zinc-600"}`}>
+              <span className={`text-[10px] font-medium leading-none
+                ${active ? "text-amber-400" : "text-zinc-600"}`}>
                 {label}
               </span>
             </button>

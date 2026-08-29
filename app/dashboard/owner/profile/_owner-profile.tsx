@@ -83,7 +83,7 @@ function SettingsDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center
+      className="fixed inset-0 z-[60] flex items-center justify-center
         bg-black/70 backdrop-blur-sm px-4 pb-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       role="dialog" aria-modal="true" aria-label="Settings"
