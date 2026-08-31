@@ -9,7 +9,7 @@ export type FetchedVehicle = {
   brand:       string;
   model:       string;
   plateNumber: string | null;
-};
+};  
 
 export async function getVehicles(): Promise<FetchedVehicle[]> {
   const session = await auth.api.getSession({ headers: await headers() });

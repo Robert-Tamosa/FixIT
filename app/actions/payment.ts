@@ -5,15 +5,6 @@ import { auth } from "@/lib/auth"; // ASSUMPTION — adjust to your actual auth 
 import { prisma } from "@/lib/prisma"; // ASSUMPTION — adjust to your actual prisma import path
 
 // ============================================================
-// Config — set these in .env
-//   PAYMONGO_SECRET_KEY=sk_test_xxx (or sk_live_xxx)
-//   PAYMONGO_WEBHOOK_SECRET=whsec_xxx
-//   NEXT_PUBLIC_APP_URL=https://your-domain.com
-// ============================================================
-const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET_KEY!;
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL!;
-
-// ============================================================
 // Auth helpers
 // ============================================================
 async function requireUser() {
@@ -47,6 +38,12 @@ async function resolvePaymentAccess(
 // ============================================================
 // Display type
 // ============================================================
+// "ONLINE" kept in the type union purely so any pre-existing PayMongo
+// payment rows from before this change still display sensibly (e.g. in
+// booking history) rather than hitting an unhandled case — but nothing in
+// this file can CREATE a new ONLINE payment anymore. If you're certain no
+// ONLINE rows exist yet, this can be dropped along with the PaymentMethod
+// enum value in schema.prisma; left in as the safer default otherwise.
 export type DisplayPayment = {
   id: string;
   bookingId: string;
@@ -57,7 +54,6 @@ export type DisplayPayment = {
   paidVia: string | null;
   cashConfirmedAt: string | null;
   paidAt: string | null;
-  // Direct-wallet fields — only populated when method is GCASH_DIRECT/MAYA_DIRECT
   directQrImage: string | null;
   directAccountName: string | null;
   directIsBusiness: boolean | null;
@@ -97,30 +93,6 @@ function toDisplay(p: {
 }
 
 // ============================================================
-// PayMongo API helper (unchanged — only used by the ONLINE/PayMongo path)
-// ============================================================
-async function paymongoFetch(path: string, init: RequestInit) {
-  const res = await fetch(`https://api.paymongo.com/v1${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Basic ${Buffer.from(`${PAYMONGO_SECRET_KEY}:`).toString("base64")}`,
-      ...init.headers,
-    },
-  });
-  const json = await res.json();
-  if (!res.ok) {
-    const msg = json?.errors?.[0]?.detail ?? "PayMongo request failed";
-    throw new Error(msg);
-  }
-  return json;
-}
-
-function pesosToCentavos(amount: number) {
-  return Math.round(amount * 100);
-}
-
-// ============================================================
 // getPayment — fetch the payment row for a booking, or null if the owner
 // hasn't picked a method yet.
 // ============================================================
@@ -141,9 +113,9 @@ export async function getPayment(bookingId: string): Promise<DisplayPayment | nu
 
 // ============================================================
 // getDirectPaymentOptions — what direct-wallet options (if any) does THIS
-// booking's mechanic/shop actually have configured. Called by the owner's
-// payment picker before any method is chosen, so it only offers "Direct"
-// as an option when something real exists to show.
+// booking's mechanic/shop have configured. The owner's payment picker only
+// offers GCash/Maya at all when this returns something — with PayMongo
+// gone, there's no fallback e-wallet path if neither is set up.
 // ============================================================
 export type DirectPaymentOptions = {
   gcash: { accountName: string; qrImage: string; isBusiness: boolean | null } | null;
@@ -179,9 +151,6 @@ export async function getDirectPaymentOptions(bookingId: string): Promise<Direct
   if (!booking) throw new Error("Booking not found");
   if (booking.ownerId !== user.id) throw new Error("Unauthorized");
 
-  // Shop bookings never have a mechanicId (no assignment step exists), so
-  // this is naturally exclusive — exactly one of these two is ever
-  // relevant for a given booking.
   const source = booking.shopId ? booking.shop : booking.mechanic?.mechanicProfile;
 
   const gcash = source?.gcashQrImage && source?.gcashAccountName
@@ -195,9 +164,7 @@ export async function getDirectPaymentOptions(bookingId: string): Promise<Direct
 }
 
 // ============================================================
-// Shared setup for choosing any payment method: loads the booking +
-// invoice, checks owner access, checks the invoice exists, and blocks
-// re-choosing once a payment already succeeded or failed.
+// Shared setup for choosing any payment method.
 // ============================================================
 async function loadBookingForPaymentChoice(bookingId: string) {
   const user = await requireUser();
@@ -242,9 +209,6 @@ export async function chooseCashPayment(bookingId: string): Promise<DisplayPayme
       checkoutUrl: null,
       paidVia: null,
       failureReason: null,
-      // Clear any prior direct-wallet snapshot/owner-sent marker when
-      // switching methods — those only mean something for the method they
-      // were set under.
       directQrImage: null,
       directAccountName: null,
       directIsBusiness: null,
@@ -255,75 +219,9 @@ export async function chooseCashPayment(bookingId: string): Promise<DisplayPayme
 }
 
 // ============================================================
-// chooseOnlinePayment — owner selects GCash or Maya via PayMongo (money
-// collected by the platform first, payout tracked manually — unchanged
-// from before).
-// ============================================================
-export async function chooseOnlinePayment(
-  bookingId: string,
-  provider: "gcash" | "maya",
-): Promise<DisplayPayment> {
-  const booking = await loadBookingForPaymentChoice(bookingId);
-  const amount = Number(booking.invoice!.totalAmount);
-  if (amount <= 0) throw new Error("Invoice has no payable amount");
-
-  // ASSUMPTION, verify against the PayMongo dashboard/API reference before
-  // going live: source `type` for Maya may be "paymaya" rather than "maya".
-  const sourceType = provider === "gcash" ? "gcash" : "paymaya";
-
-  const sourceRes = await paymongoFetch("/sources", {
-    method: "POST",
-    body: JSON.stringify({
-      data: {
-        attributes: {
-          type: sourceType,
-          amount: pesosToCentavos(amount),
-          currency: "PHP",
-          redirect: {
-            success: `${APP_URL}/dashboard/owner/payment/${bookingId}/success`,
-            failed: `${APP_URL}/dashboard/owner/payment/${bookingId}/failed`,
-          },
-        },
-      },
-    }),
-  });
-
-  const sourceId: string = sourceRes.data.id;
-  const checkoutUrl: string = sourceRes.data.attributes.redirect.checkout_url;
-
-  const payment = await prisma.payment.upsert({
-    where: { bookingId },
-    create: {
-      bookingId,
-      amount,
-      method: "ONLINE",
-      status: "PENDING",
-      providerSourceId: sourceId,
-      checkoutUrl,
-      paidVia: provider,
-    },
-    update: {
-      method: "ONLINE",
-      status: "PENDING",
-      providerSourceId: sourceId,
-      checkoutUrl,
-      paidVia: provider,
-      failureReason: null,
-      directQrImage: null,
-      directAccountName: null,
-      directIsBusiness: null,
-      ownerMarkedSentAt: null,
-    },
-  });
-  return toDisplay(payment);
-}
-
-// ============================================================
-// chooseDirectPayment — owner selects GCash-direct or Maya-direct: money
-// goes straight to the mechanic/shop's own personal or business wallet,
-// bypassing the platform entirely. No PayMongo call — this just snapshots
-// the mechanic/shop's own QR onto the Payment row and waits for a manual
-// confirm, same trust model as cash.
+// chooseDirectPayment — owner selects GCash or Maya: money goes straight
+// to the mechanic/shop's own personal or business wallet. No PayMongo
+// involved at all — this is now the ONLY way to pay via GCash/Maya.
 // ============================================================
 export async function chooseDirectPayment(
   bookingId: string,
@@ -334,7 +232,7 @@ export async function chooseDirectPayment(
   const chosen = provider === "gcash" ? options.gcash : options.maya;
   if (!chosen) {
     throw new Error(
-      `This ${booking.shopId ? "shop" : "mechanic"} hasn't set up direct ${provider === "gcash" ? "GCash" : "Maya"} payments yet — choose another method.`,
+      `This ${booking.shopId ? "shop" : "mechanic"} hasn't set up ${provider === "gcash" ? "GCash" : "Maya"} payments yet — choose Cash instead.`,
     );
   }
 
@@ -356,7 +254,6 @@ export async function chooseDirectPayment(
       directAccountName: chosen.accountName,
       directIsBusiness: chosen.isBusiness,
       ownerMarkedSentAt: null,
-      // Clear any prior PayMongo-online fields — irrelevant to this method.
       providerSourceId: null,
       checkoutUrl: null,
       paidVia: null,
@@ -368,9 +265,7 @@ export async function chooseDirectPayment(
 
 // ============================================================
 // markPaymentSentByOwner — owner taps "I've Sent Payment" after paying via
-// the direct-wallet QR. Purely informational (see schema note on
-// ownerMarkedSentAt) — does not move status to PAID. Gives the
-// mechanic/shop a heads-up signal instead of a cold PENDING state.
+// the direct-wallet QR. Purely informational — does not move status to PAID.
 // ============================================================
 export async function markPaymentSentByOwner(bookingId: string): Promise<DisplayPayment> {
   const user = await requireUser();
@@ -392,14 +287,9 @@ export async function markPaymentSentByOwner(bookingId: string): Promise<Display
 }
 
 // ============================================================
-// confirmCashPayment — mechanic or shop owner confirms receipt in person
-// (CASH) or after checking their own GCash/Maya wallet (GCASH_DIRECT /
-// MAYA_DIRECT). Name kept as-is despite now covering more than literal
-// cash, to avoid renaming across every file that already imports it
-// (ConfirmCashPaymentButton and its call sites) — the underlying action is
-// identical for all three: a human manually confirms money actually
-// arrived, since none of these methods have an automated webhook the way
-// ONLINE/PayMongo does.
+// confirmCashPayment — mechanic or shop owner confirms receipt, for CASH
+// or GCASH_DIRECT/MAYA_DIRECT. Name kept as-is (predates the direct-wallet
+// methods) to avoid renaming across every file that imports it.
 // ============================================================
 const MANUALLY_CONFIRMED_METHODS = ["CASH", "GCASH_DIRECT", "MAYA_DIRECT"];
 
@@ -434,69 +324,4 @@ export async function confirmCashPayment(bookingId: string): Promise<DisplayPaym
   ]);
 
   return toDisplay(payment);
-}
-
-// ============================================================
-// handlePaymongoEvent — unchanged, only ever applies to ONLINE payments.
-// ============================================================
-export async function handlePaymongoEvent(event: {
-  type: string;
-  data: { id: string; attributes: Record<string, unknown> };
-}) {
-  async function markPaid(sourceId: string) {
-    const payment = await prisma.payment.findUnique({ where: { providerSourceId: sourceId } });
-    if (!payment) return;
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: "PAID", paidAt: new Date() },
-      }),
-      prisma.invoice.update({
-        where: { bookingId: payment.bookingId },
-        data: { paymentStatus: "PAID", paidAt: new Date() },
-      }),
-    ]);
-  }
-
-  async function markFailed(sourceId: string, reason: string) {
-    await prisma.payment.updateMany({
-      where: { providerSourceId: sourceId },
-      data: { status: "FAILED", failureReason: reason },
-    });
-  }
-
-  if (event.type === "source.chargeable") {
-    const sourceId = event.data.id;
-    const payment = await prisma.payment.findUnique({ where: { providerSourceId: sourceId } });
-    if (!payment) return;
-
-    const paymentRes = await paymongoFetch("/payments", {
-      method: "POST",
-      body: JSON.stringify({
-        data: {
-          attributes: {
-            amount: pesosToCentavos(Number(payment.amount)),
-            currency: "PHP",
-            source: { id: sourceId, type: "source" },
-          },
-        },
-      }),
-    });
-    const status = paymentRes.data.attributes.status;
-    if (status === "paid") await markPaid(sourceId);
-    else await markFailed(sourceId, "Charge failed after source became chargeable");
-    return;
-  }
-
-  if (event.type === "payment.paid") {
-    const sourceId = (event.data.attributes as any)?.source?.id as string | undefined;
-    if (sourceId) await markPaid(sourceId);
-    return;
-  }
-
-  if (event.type === "payment.failed") {
-    const sourceId = (event.data.attributes as any)?.source?.id as string | undefined;
-    if (sourceId) await markFailed(sourceId, "PayMongo reported payment.failed");
-    return;
-  }
 }

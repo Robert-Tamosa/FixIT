@@ -8,6 +8,7 @@ import {
   type EmergencyCandidate,
   type EmergencyMatchResult,
 } from "@/app/actions/emergency";
+import { AddVehicleModal, type AddedVehicle } from "@/components/vehicle/AddVehicleForm";
 
 export interface DispatchedInfo {
   mechanicName: string;
@@ -19,6 +20,7 @@ interface EmergencyModalProps {
   isOpen: boolean;
   onClose: () => void;
   onDispatched: (info: DispatchedInfo) => void;
+  onChange?: (vehicles: FetchedVehicle[]) => void;
 }
 
 type Step =
@@ -36,19 +38,16 @@ const severityColor: Record<string, string> = {
   CRITICAL: "text-red-400 bg-red-400/10 border-red-400/20",
 };
 
-export function EmergencyModal({ isOpen, onClose, onDispatched }: EmergencyModalProps) {
+export function EmergencyModal({ isOpen, onClose, onDispatched, onChange }: EmergencyModalProps) {
   const [step, setStep] = useState<Step>("select-vehicle");
   const [error, setError] = useState<string | null>(null);
-
+  const [addOpen, setAddOpen] = useState(false);
   const [vehicles, setVehicles] = useState<FetchedVehicle[]>([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(false);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
-
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
-
   const [problem, setProblem] = useState("");
-
   const [matchResult, setMatchResult] = useState<EmergencyMatchResult | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<EmergencyCandidate | null>(null);
 
@@ -74,6 +73,12 @@ export function EmergencyModal({ isOpen, onClose, onDispatched }: EmergencyModal
     setSelectedVehicleId(vehicleId);
     setStep("location");
   }
+
+  function handleAdded(vehicle: AddedVehicle) {
+      const next = [vehicle, ...vehicles];
+      setVehicles(next);
+      onChange?.(next);
+    }
 
   const shareLocation = useCallback(() => {
     setLocating(true);
@@ -189,6 +194,15 @@ return (
               </div>
             )}
             {error && <p className="text-xs text-orange-400 bg-orange-500/[0.07] rounded-lg px-3 py-2">{error}</p>}
+            <button
+              onClick={() => setAddOpen(true)}
+              className="w-full text-center p-3 rounded-2xl border border-dashed
+                border-white/[0.12] text-zinc-100 text-sm font-medium
+                hover:border-amber-400/30
+                active:scale-[0.98] transition-all">
+              + Add Vehicle
+            </button>
+            <AddVehicleModal open={addOpen} onClose={() => setAddOpen(false)} onAdded={handleAdded} />
           </div>
         )}
 
@@ -344,4 +358,4 @@ return (
       </div>
     </div>
   );
-}
+ }

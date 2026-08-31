@@ -5,14 +5,11 @@ import {
   getPayment,
   getDirectPaymentOptions,
   chooseCashPayment,
-  chooseOnlinePayment,
   chooseDirectPayment,
   markPaymentSentByOwner,
   type DisplayPayment,
   type DirectPaymentOptions,
 } from "@/app/actions/payment";
-
-type TopChoice = "menu" | "direct-submenu";
 
 export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
   const [payment, setPayment] = useState<DisplayPayment | null>(null);
@@ -20,8 +17,6 @@ export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [qrFailed, setQrFailed] = useState(false);
-  const [view, setView] = useState<TopChoice>("menu");
 
   async function refresh() {
     try {
@@ -41,9 +36,6 @@ export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
   }, [bookingId]);
 
   useEffect(() => {
-    // Poll while a decision might still be in flight — online payment
-    // waiting on the webhook, or a direct-wallet payment waiting on the
-    // mechanic/shop's manual confirm.
     if (payment?.status !== "PENDING") return;
     const interval = setInterval(refresh, 6000);
     return () => clearInterval(interval);
@@ -63,29 +55,14 @@ export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
     }
   }
 
-  async function handleOnline(provider: "gcash" | "maya") {
-    setBusy(true);
-    setError(null);
-    setQrFailed(false);
-    try {
-      const p = await chooseOnlinePayment(bookingId, provider);
-      setPayment(p);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start online payment");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function handleDirect(provider: "gcash" | "maya") {
     setBusy(true);
     setError(null);
     try {
       const p = await chooseDirectPayment(bookingId, provider);
       setPayment(p);
-      setView("menu");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start direct payment");
+      setError(err instanceof Error ? err.message : "Couldn't start payment");
     } finally {
       setBusy(false);
     }
@@ -104,12 +81,8 @@ export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
     }
   }
 
-  function handleOpenApp() {
-    if (!payment?.checkoutUrl) return;
-    window.location.href = payment.checkoutUrl;
-  }
-
-  const hasDirectOptions = !!(directOptions?.gcash || directOptions?.maya);
+  const hasGcash = !!directOptions?.gcash;
+  const hasMaya = !!directOptions?.maya;
 
   if (loading) {
     return (
@@ -141,28 +114,14 @@ export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
           <p className="text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">
             Payment didn't go through. Try again or pick a different method.
           </p>
-          <MethodMenu
-            view={view}
-            setView={setView}
+          <MethodButtons
             busy={busy}
-            hasDirectOptions={hasDirectOptions}
-            directOptions={directOptions}
+            hasGcash={hasGcash}
+            hasMaya={hasMaya}
             onCash={handleCash}
-            onOnline={handleOnline}
             onDirect={handleDirect}
           />
         </div>
-      )}
-
-      {payment?.status === "PENDING" && payment.method === "ONLINE" && payment.checkoutUrl && (
-        <OnlinePendingPanel
-          payment={payment}
-          busy={busy}
-          qrFailed={qrFailed}
-          setQrFailed={setQrFailed}
-          onOpenApp={handleOpenApp}
-          onSwitchToCash={handleCash}
-        />
       )}
 
       {payment?.status === "PENDING" && (payment.method === "GCASH_DIRECT" || payment.method === "MAYA_DIRECT") && (
@@ -181,14 +140,11 @@ export function PaymentMethodCard({ bookingId }: { bookingId: string }) {
       )}
 
       {(!payment || (payment.status === "PENDING" && !payment.method)) && (
-        <MethodMenu
-          view={view}
-          setView={setView}
+        <MethodButtons
           busy={busy}
-          hasDirectOptions={hasDirectOptions}
-          directOptions={directOptions}
+          hasGcash={hasGcash}
+          hasMaya={hasMaya}
           onCash={handleCash}
-          onOnline={handleOnline}
           onDirect={handleDirect}
         />
       )}
@@ -200,215 +156,72 @@ function paidViaLabel(payment: DisplayPayment): string {
   if (payment.method === "CASH") return "in cash";
   if (payment.method === "GCASH_DIRECT") return "directly via GCash";
   if (payment.method === "MAYA_DIRECT") return "directly via Maya";
-  return `via ${payment.paidVia ?? "online"}`;
+  return `via ${payment.paidVia ?? "online"}`; // legacy ONLINE rows, if any predate this change
 }
 
-// ── Top-level method menu, with a Direct sub-menu ────────────────────────
+// ── Method picker — Cash always available; GCash/Maya only when THIS
+// mechanic/shop has actually configured one, since there's no PayMongo
+// fallback anymore. ────────────────────────────────────────────────────────
 
-function MethodMenu({
-  view,
-  setView,
+function MethodButtons({
   busy,
-  hasDirectOptions,
-  directOptions,
+  hasGcash,
+  hasMaya,
   onCash,
-  onOnline,
   onDirect,
 }: {
-  view: TopChoice;
-  setView: (v: TopChoice) => void;
   busy: boolean;
-  hasDirectOptions: boolean;
-  directOptions: DirectPaymentOptions | null;
+  hasGcash: boolean;
+  hasMaya: boolean;
   onCash: () => void;
-  onOnline: (provider: "gcash" | "maya") => void;
   onDirect: (provider: "gcash" | "maya") => void;
 }) {
-  if (view === "direct-submenu") {
-    return (
-      <div className="space-y-2">
-        <button
-          onClick={() => setView("menu")}
-          className="text-xs text-zinc-500 underline underline-offset-2"
-        >
-          ← Back
-        </button>
-        <p className="text-xs text-zinc-500">
-          Pays straight into their own account — not through FixIT.
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {directOptions?.gcash && (
-            <button
-              onClick={() => onDirect("gcash")}
-              disabled={busy}
-              className="rounded-xl border border-amber-400/40 text-amber-400 text-sm py-2 disabled:opacity-50"
-            >
-              GCash Direct
-            </button>
-          )}
-          {directOptions?.maya && (
-            <button
-              onClick={() => onDirect("maya")}
-              disabled={busy}
-              className="rounded-xl border border-amber-400/40 text-amber-400 text-sm py-2 disabled:opacity-50"
-            >
-              Maya Direct
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const walletCount = (hasGcash ? 1 : 0) + (hasMaya ? 1 : 0);
 
   return (
-    <div className={`grid gap-2 ${hasDirectOptions ? "grid-cols-3" : "grid-cols-3"}`}>
-      <button
-        onClick={onCash}
-        disabled={busy}
-        className="rounded-xl border border-white/[0.08] text-zinc-200 text-sm py-2 disabled:opacity-50"
-      >
-        Cash
-      </button>
-      <button
-        onClick={() => onOnline("gcash")}
-        disabled={busy}
-        className="rounded-xl border border-amber-400/40 text-amber-400 text-sm py-2 disabled:opacity-50"
-      >
-        GCash
-      </button>
-      <button
-        onClick={() => onOnline("maya")}
-        disabled={busy}
-        className="rounded-xl border border-amber-400/40 text-amber-400 text-sm py-2 disabled:opacity-50"
-      >
-        Maya
-      </button>
-      {hasDirectOptions && (
+    <div className="space-y-2">
+      <div className={`grid gap-2 ${walletCount === 0 ? "grid-cols-1" : walletCount === 1 ? "grid-cols-2" : "grid-cols-3"}`}>
         <button
-          onClick={() => setView("direct-submenu")}
+          onClick={onCash}
           disabled={busy}
-          className="col-span-3 rounded-xl border border-white/[0.08] text-zinc-400 text-xs py-2 disabled:opacity-50"
+          className="rounded-xl border border-white/[0.08] text-zinc-200 text-sm py-2 disabled:opacity-50"
         >
-          Pay directly to their own GCash/Maya instead →
+          Cash
         </button>
-      )}
-    </div>
-  );
-}
-
-// ── PayMongo online pending — unchanged from before ──────────────────────
-
-function OnlinePendingPanel({
-  payment,
-  busy,
-  qrFailed,
-  setQrFailed,
-  onOpenApp,
-  onSwitchToCash,
-}: {
-  payment: DisplayPayment;
-  busy: boolean;
-  qrFailed: boolean;
-  setQrFailed: (v: boolean) => void;
-  onOpenApp: () => void;
-  onSwitchToCash: () => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="text-center">
-        <p className="text-[11px] text-zinc-500">Amount to pay</p>
-        <p className="text-2xl font-bold text-amber-400">
-          ₱{payment.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-        </p>
+        {hasGcash && (
+          <button
+            onClick={() => onDirect("gcash")}
+            disabled={busy}
+            className="rounded-xl border border-amber-400/40 text-amber-400 text-sm py-2 disabled:opacity-50"
+          >
+            GCash
+          </button>
+        )}
+        {hasMaya && (
+          <button
+            onClick={() => onDirect("maya")}
+            disabled={busy}
+            className="rounded-xl border border-amber-400/40 text-amber-400 text-sm py-2 disabled:opacity-50"
+          >
+            Maya
+          </button>
+        )}
       </div>
-
-      {!qrFailed && payment.checkoutUrl && (
-        <div className="flex justify-center">
-          <div className="p-2.5 bg-white rounded-xl">
-            <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(payment.checkoutUrl)}`}
-              alt="Scan to pay"
-              width={200}
-              height={200}
-              onError={() => setQrFailed(true)}
-            />
-          </div>
-        </div>
+      {walletCount > 0 && (
+        <p className="text-[11px] text-zinc-600 text-center">
+          GCash/Maya pay directly into their own account — not through FixIT.
+        </p>
       )}
-
-      <button
-        onClick={onOpenApp}
-        className="w-full text-center text-sm font-semibold rounded-xl bg-amber-400 text-zinc-900 px-4 py-3"
-      >
-        Pay with {payment.paidVia === "gcash" ? "GCash" : "Maya"}
-      </button>
-
-      <p className="text-[11px] text-zinc-600 text-center">
-        Scan the code above from another device, or tap the button to open the {payment.paidVia === "gcash" ? "GCash" : "Maya"} app directly.
-      </p>
-
-      <button
-        onClick={onSwitchToCash}
-        disabled={busy}
-        className="w-full text-xs text-zinc-400 underline underline-offset-2"
-      >
-        Pay cash instead
-      </button>
+      {walletCount === 0 && (
+        <p className="text-[11px] text-zinc-600 text-center">
+          This mechanic/shop hasn't set up GCash or Maya yet — cash only for now.
+        </p>
+      )}
     </div>
   );
 }
 
-// ── Direct-to-wallet pending — new ────────────────────────────────────────
-
-// ============================================================
-// REPLACE the DirectPendingPanel function in PaymentMethodCard.tsx with
-// this version — adds a "Save QR to Photos" button above the QR image.
-// ============================================================
-
-async function saveQrImage(dataUri: string, filename: string): Promise<"shared" | "downloaded" | "failed"> {
-  try {
-    const res = await fetch(dataUri);
-    const blob = await res.blob();
-    const file = new File([blob], filename, { type: blob.type || "image/png" });
-
-    // navigator.share/canShare with a `files` array is Web Share API Level 2
-    // — well supported on modern iOS Safari and Chrome Android, which is
-    // what actually gives a real native "Save Image" option in the share
-    // sheet. Cast to `any` since some TS lib.dom versions don't include the
-    // `files` field on ShareData yet — this is a runtime feature-check
-    // either way, so the cast doesn't weaken the actual safety here.
-    const nav = navigator as any;
-    if (typeof nav.share === "function" && nav.canShare?.({ files: [file] })) {
-      try {
-        await nav.share({ files: [file] });
-        return "shared";
-      } catch {
-        // AbortError (user cancelled the share sheet) or a share failure —
-        // either way, don't also trigger a fallback download on top of it;
-        // that would be a confusing double-prompt.
-        return "shared";
-      }
-    }
-  } catch {
-    // blob/file construction failed — fall through to the download link
-  }
-
-  // Fallback for browsers without Web Share file support (older iOS Safari,
-  // most desktop browsers). Works reliably on Android Chrome and desktop;
-  // on unsupported iOS versions this may just open the image in a new tab
-  // instead of downloading — the long-press hint in the UI covers that case.
-  try {
-    const a = document.createElement("a");
-    a.href = dataUri;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    return "downloaded";
-  } catch {
-    return "failed";
-  }
-}
+// ── Direct-to-wallet pending ──────────────────────────────────────────────
 
 function DirectPendingPanel({
   payment,
@@ -503,4 +316,38 @@ function DirectPendingPanel({
       </button>
     </div>
   );
+}
+
+// ── QR save helper — unchanged from before ───────────────────────────────
+
+async function saveQrImage(dataUri: string, filename: string): Promise<"shared" | "downloaded" | "failed"> {
+  try {
+    const res = await fetch(dataUri);
+    const blob = await res.blob();
+    const file = new File([blob], filename, { type: blob.type || "image/png" });
+
+    const nav = navigator as any;
+    if (typeof nav.share === "function" && nav.canShare?.({ files: [file] })) {
+      try {
+        await nav.share({ files: [file] });
+        return "shared";
+      } catch {
+        return "shared";
+      }
+    }
+  } catch {
+    // fall through to the download link
+  }
+
+  try {
+    const a = document.createElement("a");
+    a.href = dataUri;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return "downloaded";
+  } catch {
+    return "failed";
+  }
 }

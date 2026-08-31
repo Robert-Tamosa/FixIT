@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   getShopBookings,
@@ -15,6 +15,7 @@ import { generateInvoice } from "@/app/actions/invoice";
 import { getPayment, type DisplayPayment } from "@/app/actions/payment";
 import { ConfirmCashPaymentButton } from "@/components/payment/ConfirmCashPaymentButton";
 import { usePolling } from "@/app/hooks/usePolling";
+import { NotificationBell } from "@/components/NotificationBell";
 
 interface ShopDashboardProps {
   shopName: string;
@@ -69,26 +70,29 @@ export function ShopDashboardView({
     <div className="min-h-screen bg-[#080909]">
       <div className="max-w-full mx-auto px-6 py-8 pb-28 space-y-6">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-amber-400/10 border border-amber-400/20
-            flex items-center justify-center shrink-0">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" stroke="#FBBF24" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-zinc-100">{shopName}</h1>
-              {isVerified && (
-                <span className="text-[10px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20
-                  px-2 py-0.5 rounded-full">
-                  Verified
-                </span>
-              )}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-amber-400/10 border border-amber-400/20
+              flex items-center justify-center shrink-0">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6" stroke="#FBBF24" strokeWidth="1.8"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
-            <p className="text-sm text-zinc-500 mt-0.5">{shopAddress}</p>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-semibold text-zinc-100">{shopName}</h1>
+                {isVerified && (
+                  <span className="text-[9px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20
+                    px-2 py-0.5 rounded-full">
+                    Verified
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-zinc-500 mt-0.5">{shopAddress}</p>
+            </div>
           </div>
+          <div className=""><NotificationBell /></div>
         </div>
 
         {/* Stat cards */}
@@ -212,14 +216,29 @@ const MANUALLY_CONFIRMED = ["CASH", "GCASH_DIRECT", "MAYA_DIRECT"];
 function PaymentStatusStrip({ bookingId }: { bookingId: string }) {
   const [payment, setPayment] = useState<DisplayPayment | null>(null);
   const [loading, setLoading] = useState(true);
+  const paymentRef = useRef<DisplayPayment | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    getPayment(bookingId)
-      .then((p) => { if (!cancelled) setPayment(p); })
-      .catch(() => { /* best-effort — leave the row without this strip on error */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+
+    function load() {
+      getPayment(bookingId)
+        .then((p) => {
+          if (cancelled) return;
+          setPayment(p);
+          paymentRef.current = p;
+        })
+        .catch(() => { /* best-effort — leave the row without this strip on error */ })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }
+
+    load();
+    const interval = setInterval(() => {
+      if (paymentRef.current?.status === "PAID") { clearInterval(interval); return; }
+      load();
+    }, 6000);
+
+    return () => { cancelled = true; clearInterval(interval); };
   }, [bookingId]);
 
   if (loading) return null;

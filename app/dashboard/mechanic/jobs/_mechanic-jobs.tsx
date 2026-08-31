@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { BottomNav } from "../_mechanic-dashboard";
 import { getPayment, type DisplayPayment } from "@/app/actions/payment";
@@ -85,14 +85,29 @@ const MANUALLY_CONFIRMED = ["CASH", "GCASH_DIRECT", "MAYA_DIRECT"];
 function PaymentStatusStrip({ bookingId }: { bookingId: string }) {
   const [payment, setPayment] = useState<DisplayPayment | null>(null);
   const [loading, setLoading] = useState(true);
+  const paymentRef = useRef<DisplayPayment | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    getPayment(bookingId)
-      .then((p) => { if (!cancelled) setPayment(p); })
-      .catch(() => { /* best-effort — leave the card without this strip on error */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+
+    function load() {
+      getPayment(bookingId)
+        .then((p) => {
+          if (cancelled) return;
+          setPayment(p);
+          paymentRef.current = p;
+        })
+        .catch(() => { /* best-effort — leave the card without this strip on error */ })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }
+
+    load();
+    const interval = setInterval(() => {
+      if (paymentRef.current?.status === "PAID") { clearInterval(interval); return; }
+      load();
+    }, 6000);
+
+    return () => { cancelled = true; clearInterval(interval); };
   }, [bookingId]);
 
   if (loading) return null;

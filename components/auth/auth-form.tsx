@@ -48,7 +48,9 @@ export function AuthForm({ mode }: AuthFormProps) {
           name: fullName,
         });
         if (error) { setError(error.message ?? "Sign up failed."); return; }
-        router.push("/signIn");
+        // replace, not push — a completed signup form shouldn't be a valid
+        // "back" target from the sign-in page that follows it.
+        router.replace("/signIn");
         return;
       }
 
@@ -56,11 +58,17 @@ export function AuthForm({ mode }: AuthFormProps) {
         { email, password },
         {
           async onSuccess(context) {
-            // fixed: was /two-factor
+            // FIX: both branches were router.push, which leaves /signIn (and
+            // /verify-otp) sitting in browser history as valid "back"
+            // targets even after a successful login — once authenticated,
+            // there's no reason anyone should ever navigate backward INTO
+            // the sign-in form again. replace swaps the current history
+            // entry instead of adding a new one on top of it, so /signIn
+            // stops being reachable via back from this point forward.
             if (context.data.twoFactorRedirect) {
-              router.push("/verify-otp");
+              router.replace("/verify-otp");
             } else {
-              router.push("/dashboard");
+              router.replace("/dashboard");
             }
           },
         }

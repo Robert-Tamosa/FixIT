@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, useRef } from "react";
 import { usePolling } from "@/app/hooks/usePolling";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -13,6 +13,7 @@ import { setAvailability } from "@/app/actions/mechanic-location";
 import { generateInvoice } from "@/app/actions/invoice";
 import { getPayment, type DisplayPayment } from "@/app/actions/payment";
 import { ConfirmCashPaymentButton } from "@/components/payment/ConfirmCashPaymentButton";
+import { NotificationBell } from "@/components/NotificationBell";
 
 // ── Exported types ────────────────────────────────────────────────────────────
 
@@ -323,32 +324,7 @@ function Header({ mechanic }: { mechanic: SessionMechanic }) {
         </div>
 
         <div className="flex items-center gap-2.5">
-          <button
-            aria-label="Notifications"
-            className="relative w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08]
-              flex items-center justify-center hover:bg-white/[0.07] transition-colors">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-hidden="true">
-              <path
-                d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
-                stroke="#71717A"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M13.73 21a2 2 0 0 1-3.46 0"
-                stroke="#71717A"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-            </svg>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-amber-400 rounded-full border-2 border-[#080909]" />
-          </button>
+          <NotificationBell/>
           <div
             className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20
             flex items-center justify-center">
@@ -964,14 +940,29 @@ const MANUALLY_CONFIRMED = ["CASH", "GCASH_DIRECT", "MAYA_DIRECT"];
 function JobPaymentStrip({ bookingId }: { bookingId: string }) {
   const [payment, setPayment] = useState<DisplayPayment | null>(null);
   const [loading, setLoading] = useState(true);
+  const paymentRef = useRef<DisplayPayment | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    getPayment(bookingId)
-      .then((p) => { if (!cancelled) setPayment(p); })
-      .catch(() => { /* best-effort — leave the card without this strip on error */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+
+    function load() {
+      getPayment(bookingId)
+        .then((p) => {
+          if (cancelled) return;
+          setPayment(p);
+          paymentRef.current = p;
+        })
+        .catch(() => { /* best-effort — leave the card without this strip on error */ })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }
+
+    load();
+    const interval = setInterval(() => {
+      if (paymentRef.current?.status === "PAID") { clearInterval(interval); return; }
+      load();
+    }, 6000);
+
+    return () => { cancelled = true; clearInterval(interval); };
   }, [bookingId]);
 
   if (loading) {
@@ -1009,8 +1000,6 @@ function JobPaymentStrip({ bookingId }: { bookingId: string }) {
     );
   }
 
-  // No payment row / no method chosen yet — owner hasn't picked cash vs
-  // online vs direct in their invoice card.
   return (
     <div className="px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.07]
       text-xs text-zinc-500 text-center">
