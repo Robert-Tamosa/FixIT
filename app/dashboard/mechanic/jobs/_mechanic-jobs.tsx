@@ -74,7 +74,7 @@ function StarRating({ value }: { value: number }) {
   );
 }
 
-// Fetches its own payment status rather than requiring JobItem to carry
+// Fetches its own payment status rather than requiring JobItem to carry  
 // payment fields — keeps this self-contained without needing to touch
 // whatever page.tsx currently populates the jobs list server-side.
 // Only rendered for DONE jobs (see JobCard below), so the extra fetch only
