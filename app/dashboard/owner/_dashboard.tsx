@@ -32,6 +32,7 @@ export interface DisplayBooking {
   id: string;
   mechanicName: string;
   mechanicInitials: string | null;
+  mechanicPhone: string | null;
   ShopName: string;
   mechanicRating: number;
   service: string; // problemDescription from DB
@@ -42,9 +43,10 @@ export interface DisplayBooking {
     | "EN_ROUTE"
     | "IN_PROGRESS"
     | "DONE";
-  scheduledAt: string | null; // pre-formatted string from page.tsx
-  price: string; // e.g. "₱850" or "TBD"
-  vehicleLabel: string; // e.g. "Toyota Vios"
+  isEmergency: boolean;
+  scheduledAt: string | null; 
+  price: string; 
+  vehicleLabel: string; 
 }
 
 export interface DisplayEstimateReview {
@@ -67,6 +69,19 @@ export interface DisplayMechanic {
   rating: number;
   reviews: number;
   available: boolean;
+  lat: number;
+  lng: number;
+}
+
+export interface DisplayShop {
+  id: string;
+  name: string;
+  initials: string;
+  services: string[];
+  rating: number;
+  reviews: number;
+  lat: number;
+  lng: number;
 }
 
 export interface DisplayVehicle {
@@ -723,6 +738,31 @@ function ActiveBookingCard({ booking }: { booking: DisplayBooking }) {
             </div>
           </div>
 
+          {/* Emergency-only: mechanic's number, front and center. Not
+              tucked into a menu — an owner mid-emergency shouldn't have to
+              hunt for it. Only renders if the booking is flagged emergency
+              AND a phone number actually came back (shop bookings before
+              a mechanic gets assigned, or a mechanic with no phone on file,
+              would otherwise render a dead "tel:" link). */}
+          {booking.isEmergency && booking.mechanicPhone && (
+            <a
+              href={`tel:${booking.mechanicPhone}`}
+              className="flex items-center justify-center gap-2 mb-4 py-2.5 rounded-xl
+                bg-red-500/10 border border-red-500/25 text-red-300 text-sm font-semibold
+                hover:bg-red-500/15 transition-colors">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"
+                  stroke="#FCA5A5"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Call {isShopBooking ? "Shop" : "Mechanic"} — {booking.mechanicPhone}
+            </a>
+          )}
+
           {/* Actions */}
           <div className="flex items-center gap-2">
             <div
@@ -833,23 +873,113 @@ function NoActiveBooking() {
   );
 }
 
-// ── Nearby Mechanics ──────────────────────────────────────────────────────────
+// ── Nearby ────────────────────────────────────────────────────────────────────
+
+// Straight-line distance — same haversine formula already used server-side
+// in tracking-actions.ts for geofencing, duplicated here since geolocation
+// only exists client-side and there's no reason to round-trip to the
+// server just to do arithmetic on numbers the client already has.
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371; // km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDistance(km: number): string {
+  if (km < 1) return `${Math.round(km * 1000)} m away`;
+  return `${km.toFixed(1)} km away`;
+}
+
+type NearbyCard = {
+  kind: "mechanic" | "shop";
+  id: string;
+  name: string;
+  initials: string;
+  subtitle: string;
+  rating: number;
+  reviews: number;
+  lat: number;
+  lng: number;
+};
+
+const NEARBY_DISPLAY_LIMIT = 6;
 
 function NearbyMechanicsSection({
   mechanics,
+  shops,
+  homeLat,
+  homeLng,
 }: {
   mechanics: DisplayMechanic[];
+  shops: DisplayShop[];
+  homeLat: number | null;
+  homeLng: number | null;
 }) {
+  // Starts with the home address (if set) as an immediate fallback, then
+  // upgrades to live GPS the moment the browser grants it.
+  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(
+    homeLat != null && homeLng != null ? { lat: homeLat, lng: homeLng } : null,
+  );
+  const [locationSource, setLocationSource] = useState<"gps" | "home" | "none">(
+    homeLat != null && homeLng != null ? "home" : "none",
+  );
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocationSource("gps");
+      },
+      () => {
+        // Denied, unavailable, or timed out — keep whatever was already
+        // set (home address, or nothing) rather than clearing it.
+      },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300_000 },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const available = mechanics.filter((m) => m.available);
 
-  if (available.length === 0) {
+  const candidates: NearbyCard[] = [
+    ...available.map((m) => ({
+      kind: "mechanic" as const,
+      id: m.id, name: m.name, initials: m.initials,
+      subtitle: m.specialty, rating: m.rating, reviews: m.reviews,
+      lat: m.lat, lng: m.lng,
+    })),
+    ...shops.map((s) => ({
+      kind: "shop" as const,
+      id: s.id, name: s.name, initials: s.initials,
+      subtitle: s.services[0] ?? "Repair Shop", rating: s.rating, reviews: s.reviews,
+      lat: s.lat, lng: s.lng,
+    })),
+  ];
+
+  const withDistance = candidates.map((c) => ({
+    ...c,
+    distanceKm: myLocation ? haversineKm(myLocation.lat, myLocation.lng, c.lat, c.lng) : null,
+  }));
+
+  const sorted = myLocation
+    ? [...withDistance].sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity))
+    : withDistance;
+
+  const display = sorted.slice(0, NEARBY_DISPLAY_LIMIT);
+
+  if (display.length === 0) {
     return (
       <div className="mb-4">
         <span className="text-sm font-semibold text-zinc-100 block mb-3">
-          Nearby Mechanics
+          Nearby
         </span>
         <p className="text-sm text-zinc-600 text-center py-6">
-          No mechanics available right now.
+          No mechanics or shops available right now.
         </p>
       </div>
     );
@@ -859,9 +989,9 @@ function NearbyMechanicsSection({
     <div className="mb-4">
       <div className="flex items-center justify-between mb-3">
         <span className="text-sm font-semibold text-zinc-100">
-          Nearby Mechanics
+          Nearby
           <span className="ml-2 text-[11px] font-normal text-zinc-500">
-            {available.length} available
+            {display.length} nearby
           </span>
         </span>
         <button className="text-xs text-amber-400 hover:text-amber-300 transition-colors">
@@ -869,48 +999,44 @@ function NearbyMechanicsSection({
         </button>
       </div>
 
+      {locationSource === "none" && (
+        <p className="text-[11px] text-zinc-600 mb-2.5">
+          Set your home address in your profile to see distances.
+        </p>
+      )}
+
       <div className="flex flex-col gap-2.5">
-        {available.map((m) => (
+        {display.map((c) => (
           <button
-            key={m.id}
+            key={`${c.kind}-${c.id}`}
             className="flex items-center gap-3.5 w-full text-left
               bg-white/[0.03] border border-white/[0.08] rounded-2xl px-4 py-3.5
               hover:bg-white/[0.05] hover:border-white/[0.12]
               active:scale-[0.99] transition-all">
-            <div
-              className={[
-                "w-11 h-11 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold",
-                m.available
-                  ? "bg-amber-400/10 border border-amber-400/20 text-amber-400"
-                  : "bg-white/[0.04] border border-white/[0.07] text-zinc-500",
-              ].join(" ")}>
-              {m.initials}
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold
+              bg-amber-400/10 border border-amber-400/20 text-amber-400">
+              {c.initials}
             </div>
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
                 <p className="font-semibold text-zinc-100 text-sm truncate">
-                  {m.name}
+                  {c.name}
                 </p>
-                <span
-                  className={[
-                    "shrink-0 text-[10px] px-1.5 py-0.5 rounded-md font-medium",
-                    m.available
-                      ? "bg-emerald-400/10 text-emerald-400"
-                      : "bg-zinc-800 text-zinc-500",
-                  ].join(" ")}>
-                  {m.available ? "Available" : "Busy"}
+                <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-md font-semibold
+                  bg-white/[0.06] text-zinc-400 uppercase tracking-wide">
+                  {c.kind === "shop" ? "Shop" : "Mechanic"}
                 </span>
               </div>
-              <p className="text-xs text-zinc-500 truncate">{m.specialty}</p>
+              <p className="text-xs text-zinc-500 truncate">{c.subtitle}</p>
             </div>
 
             <div className="text-right shrink-0">
               <div className="mb-0.5 flex justify-end">
-                <StarRating value={m.rating} />
+                <StarRating value={c.rating} />
               </div>
               <p className="text-[11px] text-zinc-500">
-                {m.reviews} {m.reviews === 1 ? "review" : "reviews"}
+                {c.distanceKm != null ? formatDistance(c.distanceKm) : `${c.reviews} reviews`}
               </p>
             </div>
           </button>
@@ -919,6 +1045,7 @@ function NearbyMechanicsSection({
     </div>
   );
 }
+
 
 // ── Bottom Nav ────────────────────────────────────────────────────────────────
 
@@ -1114,6 +1241,9 @@ interface OwnerDashboardProps {
   estimateReview: DisplayEstimateReview | null;
   doneUnpaidBookings: DisplayBooking[];
   mechanics: DisplayMechanic[];
+  shops: DisplayShop[];
+  homeLat: number | null;
+  homeLng: number | null;
   vehicles?: DisplayVehicle[];
 }
 
@@ -1357,6 +1487,9 @@ export default function OwnerDashboardView({
   estimateReview,
   doneUnpaidBookings = [],
   mechanics = [],
+  shops = [],
+  homeLat = null,
+  homeLng = null,
   vehicles = [],
 }: OwnerDashboardProps) {
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
@@ -1458,7 +1591,12 @@ export default function OwnerDashboardView({
         {doneUnpaidBookings.map((b) => (
           <ActiveBookingCard key={b.id} booking={b} />
         ))}
-        <NearbyMechanicsSection mechanics={mechanics} />
+        <NearbyMechanicsSection
+          mechanics={mechanics}
+          shops={shops}
+          homeLat={homeLat}
+          homeLng={homeLng}
+        />
       </div>
 
       {/* AI Diagnostic floating chathead */}

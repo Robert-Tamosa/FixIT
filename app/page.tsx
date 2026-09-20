@@ -35,6 +35,30 @@ return ( <div className="min-h-screen bg-[#080909] text-zinc-100 overflow-hidden
     </h1>
 
     <div className="flex items-center gap-2 sm:gap-4">
+
+      {/* Emergency guide — reachable without an account or login, and the
+          FIRST thing most visitors hit on the site, so this is the primary
+          placement (auth-form.tsx keeps a secondary copy for people who
+          land on /signIn directly).
+
+          Deliberately a plain <a>, NOT next/link's <Link> — Link does a
+          soft client-side transition that fetches an RSC payload under a
+          different request shape than what's precached in
+          next.config.ts's additionalPrecacheEntries. Only a real hard
+          navigation reliably hits the precached offline document. */}
+      <a
+        href="/emergency-guide"
+        className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold
+          text-red-300 bg-red-500/10 border border-red-500/25
+          px-3 py-2 rounded-xl hover:bg-red-500/15 transition-colors">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L14.71 3.86a2 2 0 0 0-3.42 0z"
+            stroke="#FCA5A5" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="hidden sm:inline">Emergency Guide</span>
+        <span className="sm:hidden">Emergency</span>
+      </a>
+
       <Link
         href="/signIn"
         className="
@@ -113,8 +137,8 @@ return ( <div className="min-h-screen bg-[#080909] text-zinc-100 overflow-hidden
           "
           >
             FixIT helps vehicle owners identify issues,
-            connect with mechanics, track repairs,
-            and manage maintenance records from one platform.
+            connect with mechanics, track repairs in real time,
+            and review service history from one platform.
           </p>
 
           <div className="mt-10 flex gap-4">
@@ -147,7 +171,9 @@ return ( <div className="min-h-screen bg-[#080909] text-zinc-100 overflow-hidden
           </div>
         </div>
 
-        {/* Dashboard Mockup */}
+        {/* Dashboard Mockup — illustrative, not a literal screenshot; the
+            92% figure is a stylized placeholder, not a real computed
+            metric anywhere in the system. */}
         <div
           className="
           rounded-[36px]
@@ -218,7 +244,7 @@ return ( <div className="min-h-screen bg-[#080909] text-zinc-100 overflow-hidden
           "AI Diagnostics",
           "Repair Tracking",
           "Booking System",
-          "Maintenance Records",
+          "Service History",
         ].map((item) => (
           <div
             key={item}

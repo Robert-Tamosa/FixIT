@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -17,6 +17,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "FixIT",
   description: "A Web-Based AI Diagnostic and Mechanic Service Application",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icon-192.png",
+  },
+};
+
+// themeColor lives here, not in `metadata`, as of Next.js 14 — it was split
+// into its own `viewport` export to match the underlying web spec.
+export const viewport: Viewport = {
+  themeColor: "#080909",
 };
 
 export default function RootLayout({

@@ -126,7 +126,31 @@ export function AuthForm({ mode }: AuthFormProps) {
           Fix<span className="text-amber-400">IT</span>
                 </span>
               </Link>
-          
+
+              {/* Emergency guide — reachable without an account, and without
+                  being logged in at all. Placed in the nav bar rather than
+                  buried at the page bottom so it's visible on first paint,
+                  matching the "prominent entry point" requirement.
+
+                  Deliberately a plain <a>, NOT next/link's <Link> — Link
+                  does a soft client-side transition that fetches an RSC
+                  payload under a different request shape than what's
+                  precached in next.config.ts's additionalPrecacheEntries.
+                  A real hard navigation is what actually guarantees this
+                  works with zero network. */}
+              <a
+                href="/emergency-guide"
+                className="flex items-center gap-1.5 text-xs font-semibold
+                  text-red-300 bg-red-500/10 border border-red-500/25
+                  px-3 py-2 rounded-xl hover:bg-red-500/15 transition-colors">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L14.71 3.86a2 2 0 0 0-3.42 0z"
+                    stroke="#FCA5A5" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="hidden sm:inline">Emergency Guide</span>
+                <span className="sm:hidden">Emergency</span>
+              </a>
+
             </div>
           </nav>
 
@@ -209,7 +233,7 @@ export function AuthForm({ mode }: AuthFormProps) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-[15px] mt-1 rounded-2xl
+            className="cursor-pointer w-full py-[15px] mt-1 rounded-2xl
               bg-amber-400 hover:bg-amber-300 active:scale-[0.97]
               text-[#080909] font-bold text-[15px] tracking-[0.1px]
               transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed
@@ -237,7 +261,7 @@ export function AuthForm({ mode }: AuthFormProps) {
             type="button"
             onClick={() => handleSocialAuth("google")}
             disabled={loading}
-            className="w-full py-[13px] rounded-2xl
+            className="cursor-pointer w-full py-[13px] rounded-2xl
               border border-white/[0.08] bg-white/[0.03]
               text-zinc-200 font-medium text-sm
               flex items-center justify-center gap-3
@@ -257,7 +281,7 @@ export function AuthForm({ mode }: AuthFormProps) {
             type="button"
             onClick={() => handleSocialAuth("facebook")}
             disabled={loading}
-            className="w-full py-[13px] rounded-2xl
+            className="cursor-pointer w-full py-[13px] rounded-2xl
               border border-white/[0.08] bg-white/[0.03]
               text-zinc-200 font-medium text-sm
               flex items-center justify-center gap-3
@@ -277,14 +301,14 @@ export function AuthForm({ mode }: AuthFormProps) {
           <p>
             Are you a mechanic?{" "}
             <Link href="/mechanicSignUp"
-              className="text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
+              className="cursor-pointer text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
               Register here
             </Link>
           </p>
           <p>
             Own a repair shop?{" "}
             <Link href="/shopRegister"
-              className="text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
+              className="cursor-pointer text-amber-400/70 hover:text-amber-400 transition-colors font-medium">
               Register your shop
             </Link>
           </p>

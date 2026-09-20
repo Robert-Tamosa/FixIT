@@ -156,13 +156,18 @@ export default async function MechanicDashboardPage() {
 
   // ── 3c. Active job (ESTIMATE_ACCEPTED | EN_ROUTE | IN_PROGRESS) — single
   //        slot, unchanged from before.
+  //
+  //        owner select now also pulls phone — ActiveJob already had an
+  //        ownerPhone field in its type from an earlier pass, but nothing
+  //        ever selected it or rendered it. Wiring it now for the
+  //        "show phone during an active emergency booking" feature.
   const rawActive = await prisma.booking.findFirst({
     where: {
       mechanicId: session.user.id,
       status:     { in: ["ESTIMATE_ACCEPTED", "EN_ROUTE", "IN_PROGRESS"] },
     },
     include: {
-      owner:   { select: { name: true } },
+      owner:   { select: { name: true, phone: true } },
       vehicle: { select: { brand: true, model: true } },
     },
     orderBy: { updatedAt: "desc" },
@@ -173,6 +178,7 @@ export default async function MechanicDashboardPage() {
         id:            rawActive.id,
         ownerName:     rawActive.owner.name   ?? "Unknown",
         ownerInitials: getInitials(rawActive.owner.name),
+        ownerPhone:    rawActive.owner.phone  ?? null,
         vehicleLabel:  `${rawActive.vehicle.brand} ${rawActive.vehicle.model}`,
         problem:       rawActive.problemDescription,
         status:        rawActive.status as ActiveJob["status"],
@@ -182,8 +188,8 @@ export default async function MechanicDashboardPage() {
       }
     : null;
 
-  // ── 3d. Done, but not yet paid — NEW. findMany, not findFirst: a mechanic
-  //        can genuinely have a job in progress AND a separate, earlier job
+  // ── 3d. Done, but not yet paid — findMany, not findFirst: a mechanic can
+  //        genuinely have a job in progress AND a separate, earlier job
   //        sitting done-unpaid at the same time — these are independent of
   //        the single activeJob slot above, not a replacement for it.
   const rawDoneUnpaid = await prisma.booking.findMany({
@@ -196,7 +202,7 @@ export default async function MechanicDashboardPage() {
       ],
     },
     include: {
-      owner:   { select: { name: true } },
+      owner:   { select: { name: true, phone: true } },
       vehicle: { select: { brand: true, model: true } },
     },
     orderBy: { updatedAt: "desc" },
@@ -206,6 +212,7 @@ export default async function MechanicDashboardPage() {
     id:            b.id,
     ownerName:     b.owner.name   ?? "Unknown",
     ownerInitials: getInitials(b.owner.name),
+    ownerPhone:    b.owner.phone  ?? null,
     vehicleLabel:  `${b.vehicle.brand} ${b.vehicle.model}`,
     problem:       b.problemDescription,
     status:        "DONE",

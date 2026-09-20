@@ -136,7 +136,7 @@ export function ShopSignupForm() {
         <button
           onClick={handleCreateAccount}
           disabled={submitting}
-          className="w-full py-3 rounded-2xl bg-amber-400 text-zinc-900 text-sm font-medium
+          className="cursor-pointer w-full py-3 rounded-2xl bg-amber-400 text-zinc-900 text-sm font-medium
             active:scale-[0.98] transition-all disabled:opacity-50">
           {submitting ? "Creating account..." : "Continue"}
         </button>
@@ -202,7 +202,7 @@ export function ShopSignupForm() {
       <button
         onClick={handleCreateShop}
         disabled={submitting}
-        className="w-full py-3 rounded-2xl bg-amber-400 text-zinc-900 text-sm font-medium
+        className="cursor-pointer w-full py-3 rounded-2xl bg-amber-400 text-zinc-900 text-sm font-medium
           active:scale-[0.98] transition-all disabled:opacity-50">
         {submitting ? "Submitting..." : "Submit for review"}
       </button>

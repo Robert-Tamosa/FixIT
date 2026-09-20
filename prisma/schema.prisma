@@ -138,6 +138,8 @@ model User {
   role             Role              @default(OWNER)
   emailVerified    Boolean           @default(false)
   twoFactorEnabled Boolean           @default(false)
+  notificationsEnabled Boolean       @default(true)
+  deletionRequestedAt  DateTime?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   homeAddress      String?
