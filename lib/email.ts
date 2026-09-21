@@ -1,6 +1,29 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY as string);
+// Constructing Resend at module top level (the previous version of this
+// file) runs the instant this module is imported — including during
+// Next.js's build-time "page data collection" step for /api/auth/[...all],
+// which imports auth.ts -> this file. If RESEND_API_KEY isn't present in
+// Vercel's BUILD environment specifically (which can be scoped differently
+// from its runtime/production environment), that top-level construction
+// throws and crashes the entire build before the app ever runs — even
+// though nothing at build time actually needs to send an email.
+//
+// Lazy singleton instead: the client is only constructed the first time
+// one of the functions below actually runs, which only happens at request
+// time, when RESEND_API_KEY is reliably available.
+let resendClient: Resend | null = null;
+
+function getResendClient(): Resend {
+  if (!resendClient) {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error("RESEND_API_KEY is not set.");
+    }
+    resendClient = new Resend(apiKey);
+  }
+  return resendClient;
+}
 
 // onboarding@resend.dev works without verifying a domain, but Resend
 // restricts unverified-domain sending to only the email address your
@@ -16,7 +39,7 @@ const FROM_ADDRESS = process.env.RESEND_FROM_EMAIL ?? "FixIT <onboarding@resend.
  * mechanism for Better Auth's twoFactor plugin (otpOptions.sendOTP).
  */
 export async function sendOTPEmail(toEmail: string, otp: string): Promise<void> {
-  const { error } = await resend.emails.send({
+  const { error } = await getResendClient().emails.send({
     from: FROM_ADDRESS,
     to: toEmail,
     subject: "Your FixIT verification code",
@@ -30,7 +53,7 @@ export async function sendOTPEmail(toEmail: string, otp: string): Promise<void> 
  * emailVerification.sendVerificationEmail in auth.ts.
  */
 export async function sendSignupVerificationEmail(toEmail: string, url: string): Promise<void> {
-  const { error } = await resend.emails.send({
+  const { error } = await getResendClient().emails.send({
     from: FROM_ADDRESS,
     to: toEmail,
     subject: "Verify your FixIT account",
