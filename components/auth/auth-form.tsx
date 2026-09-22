@@ -49,8 +49,11 @@ export function AuthForm({ mode }: AuthFormProps) {
         });
         if (error) { setError(error.message ?? "Sign up failed."); return; }
         // replace, not push — a completed signup form shouldn't be a valid
-        // "back" target from the sign-in page that follows it.
-        router.replace("/signIn");
+        // "back" target. Goes to /check-email (not /signIn) now, so the
+        // person actually sees confirmation that a verification email was
+        // sent, instead of landing on the sign-in form with zero
+        // acknowledgment of what just happened.
+        router.replace(`/check-email?email=${encodeURIComponent(email)}`);
         return;
       }
 

@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
-/**
- * Routes that do NOT require authentication.
- * Keep /setup-2fa here so logged-in users without 2FA can still reach it.
- */
 const PUBLIC_PATHS = [
   "/",
   "/signIn",
@@ -13,6 +9,7 @@ const PUBLIC_PATHS = [
   "/shop/register",
   "/verify-otp",
   "/setup-2fa",
+  "/check-email",
 ];
 
 export function middleware(req: NextRequest) {

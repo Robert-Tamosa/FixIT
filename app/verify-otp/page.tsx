@@ -40,7 +40,7 @@ export default function VerifyOTPPage(): JSX.Element {
     setError("");
 
     // Better Auth sends the OTP automatically using the sendOTP function
-    // you configured in lib/auth.ts (Twilio in production, console.log in dev)
+    // you configured in lib/auth.ts (Resend email in production, console.log in dev)
     const { error } = await authClient.twoFactor.sendOtp();
 
     if (error) {
@@ -111,8 +111,8 @@ export default function VerifyOTPPage(): JSX.Element {
   const subtitle = resendLoading
     ? "Sending your verification code…"
     : codeSent
-    ? "We've sent a 6-digit code to your registered phone number."
-    : "Enter the code sent to your registered phone.";
+    ? "We've sent a 6-digit code to your registered email address."
+    : "Enter the code sent to your registered email.";
 
   return (
     <div className="min-h-screen bg-[#0A0B0E] flex items-center justify-center p-6">

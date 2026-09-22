@@ -3,6 +3,7 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
 import { twoFactor } from "better-auth/plugins";
 import { sendOTPEmail, sendSignupVerificationEmail } from "./email";
+import { after } from "next/server";
 
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL,
@@ -37,7 +38,33 @@ export const auth = betterAuth({
   },
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
-      await sendSignupVerificationEmail(user.email, url);
+      if (process.env.NODE_ENV === "development") {
+        console.log(`\n📧 [FixIT DEV] Verification link for ${user.email}: ${url}\n`);
+        return;
+      }
+
+      // Deliberately NOT awaited directly here — Better Auth's own docs
+      // warn against awaiting an email send in this callback (a timing-
+      // attack surface) and specifically call out serverless platforms as
+      // needing waitUntil/after() so the function doesn't terminate before
+      // the send actually finishes. On Vercel, an awaited fetch here can
+      // get cut off mid-flight the moment the response goes out — a very
+      // plausible silent cause behind "account created, but no email ever
+      // arrives" even with fully correct Resend config on our end.
+      //
+      // Tradeoff: because this now runs AFTER the response is already
+      // sent, a failure here can no longer surface back to the client as
+      // an inline error — only this console.error, visible in Vercel's
+      // function logs. Given the alternative was a send that could be
+      // killed mid-flight with no logging at all, this is still the
+      // better failure mode, just a different one to know about.
+      after(async () => {
+        try {
+          await sendSignupVerificationEmail(user.email, url);
+        } catch (err) {
+          console.error("[email-verification] Resend send failed:", err);
+        }
+      });
     },
     sendOnSignUp: true,
     sendOnSignIn: true,
@@ -101,16 +128,19 @@ export const auth = betterAuth({
             return;
           }
 
-          try {
-            await sendOTPEmail(user.email, otp);
-          } catch (err) {
-            // Rethrown, not swallowed — Better Auth surfaces this as the
-            // `error` returned from authClient.twoFactor.sendOtp(). Logged
-            // here too since the client-facing message is deliberately
-            // generic (avoids leaking Resend error internals to the user).
-            console.error("[2FA] Resend email send failed:", err);
-            throw new Error("Couldn't send the verification code — try again.");
-          }
+          // Same after()-based fix as sendVerificationEmail above, and the
+          // same tradeoff: a send failure here can no longer surface back
+          // to authClient.twoFactor.sendOtp()'s `error` field, since this
+          // runs after the response is already sent. Check Vercel's
+          // function logs (this console.error) if a code seems to never
+          // arrive despite the UI showing no error.
+          after(async () => {
+            try {
+              await sendOTPEmail(user.email, otp);
+            } catch (err) {
+              console.error("[2FA] Resend email send failed:", err);
+            }
+          });
         },
       },
     }),
