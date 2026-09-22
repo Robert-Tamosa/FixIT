@@ -17,7 +17,6 @@ export interface OwnerProfileProps {
   phone: string | null;
   image: string | null;
   emailVerified: boolean;
-  twoFactorEnabled: boolean;
   vehicles: {
     id: string;
     brand: string;
@@ -346,7 +345,6 @@ export default function OwnerProfileView(props: OwnerProfileProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
           <AccountStatusCard
             emailVerified={props.emailVerified}
-            twoFactorEnabled={props.twoFactorEnabled}
           />
           <HomeLocationCard />
         </div>

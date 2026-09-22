@@ -91,7 +91,7 @@ export function AddVehicleModal({
       // likely-z-[60] booking modal too, so this stacks correctly whichever
       // context opens it. Worth double-checking against the actual booking
       // modal's z-index once that's wired in.
-      className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center
+      className="fixed inset-0 z-[70] flex items-center sm:items-center justify-center
         bg-black/70 backdrop-blur-sm px-4 pb-4 sm:pb-0"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       role="dialog" aria-modal="true" aria-label="Add vehicle"

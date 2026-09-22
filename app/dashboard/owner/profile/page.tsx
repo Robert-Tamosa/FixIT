@@ -20,7 +20,6 @@ export default async function OwnerProfilePage() {
         phone={session.user.phone}
         image={session.user.image ?? null}
         emailVerified={session.user.emailVerified}
-        twoFactorEnabled={session.user.twoFactorEnabled}
         vehicles={vehicles}
       />
       <AIDiagnosticChathead />
