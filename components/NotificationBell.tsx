@@ -9,6 +9,7 @@ import {
   markAllNotificationsRead,
   type DisplayNotification,
 } from "@/app/actions/notifications";
+import { ShopInvitationModal } from "@/components/shop/ShopInvitationModal";
 
 const POLL_INTERVAL = 15000; // notifications don't need chat-speed polling
 
@@ -23,7 +24,18 @@ const TYPE_ICON: Record<string, string> = {
   IN_PROGRESS: "M12 2v10l4 2",
   DONE: "M20 6L9 17l-5-5",
   NEW_MESSAGE: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+  // Shop icon — a wrench-ish placeholder path, distinct from the other
+  // booking-flow icons above.
+  SHOP_INVITATION: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+  SHOP_INVITATION_ACCEPTED: "M20 6L9 17l-5-5",
+  SHOP_INVITATION_DECLINED: "M18 6L6 18M6 6l12 12",
 };
+
+// Notification types that open a modal instead of navigating when clicked.
+// SHOP_INVITATION's link looks like a route (see shop-dashboard.ts's
+// inviteMechanicToShop) but is never actually navigated to — this map
+// intercepts it first and pulls the invitation id off the end of the link.
+const MODAL_TYPES = new Set(["SHOP_INVITATION"]);
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -42,6 +54,7 @@ export function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<DisplayNotification[]>([]);
   const [loading, setLoading] = useState(false);
+  const [openInvitationId, setOpenInvitationId] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const loadCount = useCallback(async () => {
@@ -101,6 +114,18 @@ export function NotificationBell() {
       markNotificationRead(n.id).catch(() => {});
     }
     setOpen(false);
+
+    // Modal types intercept here, before any navigation happens — the
+    // invitation id is the last path segment of the link
+    // ("/dashboard/mechanic/shop-invitations/<id>").
+    if (MODAL_TYPES.has(n.type) && n.link) {
+      const invitationId = n.link.split("/").filter(Boolean).pop();
+      if (invitationId) {
+        setOpenInvitationId(invitationId);
+        return;
+      }
+    }
+
     if (n.link) router.push(n.link);
   }
 
@@ -189,6 +214,13 @@ export function NotificationBell() {
             )}
           </div>
         </div>
+      )}
+
+      {openInvitationId && (
+        <ShopInvitationModal
+          invitationId={openInvitationId}
+          onClose={() => setOpenInvitationId(null)}
+        />
       )}
     </div>
   );

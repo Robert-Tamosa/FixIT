@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "./prisma";
-import { twoFactor } from "better-auth/plugins";
+import { twoFactor, admin } from "better-auth/plugins";
 import { sendOTPEmail, sendSignupVerificationEmail } from "./email";
 import { after } from "next/server";
 
@@ -104,11 +104,30 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        // This function runs fresh on every signup request — unlike a
+        // top-level config value such as requireEmailVerification (fixed
+        // at app startup), a DB read inside here reflects whatever an
+        // admin most recently set via System Settings, with no redeploy
+        // needed. That's what makes maintenanceMode and
+        // defaultNotificationsEnabled genuinely live-toggleable, while
+        // something like requireEmailVerification isn't without more
+        // invasive restructuring.
         before: async (user) => {
+          const settings = await prisma.systemSetting.upsert({
+            where:  { id: "singleton" },
+            update: {},
+            create: { id: "singleton" },
+          });
+
+          if (settings.maintenanceMode) {
+            throw new Error("New registrations are temporarily paused for maintenance. Please try again later.");
+          }
+
           return {
             data: {
               ...user,
               twoFactorEnabled: user.role === "OWNER",
+              notificationsEnabled: settings.defaultNotificationsEnabled,
             },
           };
         },
@@ -117,6 +136,13 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // adminRoles must match the schema's Role enum exactly — it's uppercase
+    // ("ADMIN"), not Better Auth's own lowercase default ("admin"). Without
+    // this, no account in this app would ever be recognized as an admin by
+    // this plugin, even with role: ADMIN set.
+    admin({
+      adminRoles: ["ADMIN"],
+    }),
     twoFactor({
       otpOptions: {
         // Matches the "Valid for 10 minutes" wording hardcoded into the

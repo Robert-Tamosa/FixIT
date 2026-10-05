@@ -135,6 +135,7 @@ export default async function AdminDashboardPage() {
       email:        true,
       role:         true,
       emailVerified: true,
+      banned:       true,
       createdAt:    true,
       mechanicProfile: { select: { isVerified: true } },
     },
@@ -151,6 +152,7 @@ export default async function AdminDashboardPage() {
     verified: u.role === "MECHANIC"
       ? (u.mechanicProfile?.isVerified ?? false)
       : u.emailVerified,
+    banned: u.banned ?? false,
   }));
 
   return (

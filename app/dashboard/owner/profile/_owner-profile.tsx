@@ -66,7 +66,7 @@ function SettingsDrawer({
       color: "text-zinc-300",
       onClick: () => {
         onClose();
-        router.push("/dashboard/owner/settings/notifications");
+        router.push("/dashboard/owner/profile/settings/notifications");
       },
     },
     {
@@ -75,7 +75,7 @@ function SettingsDrawer({
       color: "text-zinc-300",
       onClick: () => {
         onClose();
-        router.push("/dashboard/owner/settings/privacy");
+        router.push("/dashboard/owner/profile/settings/privacy");
       },
     },
     {
@@ -84,7 +84,7 @@ function SettingsDrawer({
       color: "text-zinc-300",
       onClick: () => {
         onClose();
-        router.push("/dashboard/owner/settings/help");
+        router.push("/dashboard/owner/profile/settings/help");
       },
     },
     {

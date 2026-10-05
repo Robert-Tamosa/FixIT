@@ -1,8 +1,23 @@
 "use client";
 
-import { useState }        from "react";
-import { approveMechanic, rejectMechanic, approveShop, rejectShop } from "./admin";
-// ── Exported display types ────────────────────────────────────────────────────
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import {
+  approveMechanic,
+  rejectMechanic,
+  approveShop,
+  rejectShop,
+  changeUserRole,
+  banUser,
+  unbanUser,
+  searchUsers,
+  getSystemSettings,
+  updateSystemSettings,
+  getRecentAdminActivity,
+  type AdminUserSearchResult,
+  type DisplaySystemSettings,
+  type AdminActivityEntry,
+} from "./admin";
 
 export interface AdminStats {
   owners:               number;
@@ -52,6 +67,7 @@ export interface AdminUser {
   role:      string;
   createdAt: string;
   verified:  boolean;
+  banned:    boolean;
 }
 
 // ── Status badge config ───────────────────────────────────────────────────────
@@ -316,6 +332,279 @@ function ShopVerificationCard({ shop }: { shop: PendingShop }) {
   );
 }
 
+// ── User Row (role change + ban/unban) ────────────────────────────────────────
+// Shared by both the default Recent Users list and search results — both
+// shapes are structurally compatible (id, name, email, role, banned,
+// createdAt), so one component covers both.
+
+const ROLE_OPTIONS = ["OWNER", "MECHANIC", "ADMIN"] as const;
+
+function UserRow({
+  user,
+  onChanged,
+}: {
+  user: { id: string; name: string; email: string; role: string; banned: boolean; createdAt: string };
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [showBanInput, setShowBanInput] = useState(false);
+  const [banReason, setBanReason] = useState("");
+
+  async function handleRoleChange(newRole: string) {
+    if (newRole === user.role) return;
+    setBusy(true);
+    try {
+      await changeUserRole(user.id, newRole as "OWNER" | "MECHANIC" | "ADMIN");
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBan() {
+    setBusy(true);
+    try {
+      await banUser(user.id, banReason.trim() || undefined);
+      setShowBanInput(false);
+      setBanReason("");
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUnban() {
+    setBusy(true);
+    try {
+      await unbanUser(user.id);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const initials = user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
+
+  return (
+    <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl px-4 py-3.5">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-white/[0.05] border border-white/[0.08]
+          flex items-center justify-center shrink-0">
+          <span className="text-xs font-bold text-zinc-400">{initials}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-zinc-100 truncate">{user.name}</p>
+            {user.banned && (
+              <span className="text-[9px] text-red-400 bg-red-400/10 border border-red-400/20
+                px-1.5 py-0.5 rounded-full shrink-0">Banned</span>
+            )}
+          </div>
+          <p className="text-xs text-zinc-500 truncate">{user.email}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <select
+            value={user.role}
+            onChange={(e) => handleRoleChange(e.target.value)}
+            disabled={busy}
+            className="text-[10px] bg-zinc-800/60 border border-zinc-700 text-zinc-300
+              rounded-md px-1.5 py-1 outline-none disabled:opacity-50"
+          >
+            {ROLE_OPTIONS.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+          {user.banned ? (
+            <button
+              onClick={handleUnban}
+              disabled={busy}
+              className="text-[10px] text-emerald-400 bg-emerald-400/10 border border-emerald-400/20
+                px-2 py-1 rounded-md disabled:opacity-50"
+            >
+              Unban
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowBanInput((v) => !v)}
+              disabled={busy}
+              className="text-[10px] text-red-400 bg-red-400/10 border border-red-400/20
+                px-2 py-1 rounded-md disabled:opacity-50"
+            >
+              Ban
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showBanInput && (
+        <div className="flex gap-2 mt-3">
+          <input
+            value={banReason}
+            onChange={(e) => setBanReason(e.target.value)}
+            placeholder="Reason (optional)"
+            className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-800/60 border border-zinc-700
+              text-zinc-300 text-xs outline-none focus:border-red-400/50"
+          />
+          <button
+            onClick={handleBan}
+            disabled={busy}
+            className="text-xs text-white bg-red-500/80 px-3 py-1.5 rounded-lg font-medium disabled:opacity-50"
+          >
+            {busy ? "…" : "Confirm Ban"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Settings Panel ───────────────────────────────────────────────────────────
+
+function SettingsPanel() {
+  const [settings, setSettings] = useState<DisplaySystemSettings | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getSystemSettings().then((s) => {
+      setSettings(s);
+      setAnnouncement(s.announcementMessage ?? "");
+    });
+  }, []);
+
+  async function save(partial: Partial<DisplaySystemSettings>) {
+    setSaving(true);
+    setSaved(false);
+    try {
+      await updateSystemSettings(partial);
+      setSettings((prev) => (prev ? { ...prev, ...partial } : prev));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!settings) return <p className="text-sm text-zinc-500 py-8 text-center">Loading…</p>;
+
+  return (
+    <div className="space-y-4">
+      {/* Announcement banner */}
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-4">
+        <p className="text-sm font-semibold text-zinc-100 mb-1">Platform Announcement</p>
+        <p className="text-xs text-zinc-500 mb-3">
+          Shown as a banner on the landing page and sign-in page. Leave blank to hide it.
+        </p>
+        <div className="flex gap-2">
+          <input
+            value={announcement}
+            onChange={(e) => setAnnouncement(e.target.value)}
+            placeholder="e.g. Scheduled maintenance this weekend…"
+            className="flex-1 px-3 py-2.5 rounded-xl bg-zinc-800/60 border border-zinc-700
+              text-zinc-100 text-sm placeholder:text-zinc-600 outline-none focus:border-amber-400/50"
+          />
+          <button
+            onClick={() => save({ announcementMessage: announcement.trim() || null })}
+            disabled={saving}
+            className="px-4 rounded-xl bg-amber-400 text-zinc-900 text-sm font-bold
+              disabled:opacity-50"
+          >
+            {saving ? "…" : "Save"}
+          </button>
+        </div>
+      </div>
+
+      {/* Maintenance mode */}
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-100">Maintenance Mode</p>
+          <p className="text-xs text-zinc-500 mt-0.5">Blocks new account sign-ups while enabled.</p>
+        </div>
+        <button
+          onClick={() => save({ maintenanceMode: !settings.maintenanceMode })}
+          disabled={saving}
+          className={`shrink-0 relative w-12 h-7 rounded-full transition-colors duration-200 disabled:opacity-40 ${
+            settings.maintenanceMode ? "bg-red-500" : "bg-white/[0.12]"
+          }`}
+        >
+          <span className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform duration-200 ${
+            settings.maintenanceMode ? "translate-x-5" : "translate-x-0"
+          }`} />
+        </button>
+      </div>
+
+      {/* Default notifications */}
+      <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-zinc-100">Default Notifications for New Users</p>
+          <p className="text-xs text-zinc-500 mt-0.5">Applied automatically at signup — users can change it themselves after.</p>
+        </div>
+        <button
+          onClick={() => save({ defaultNotificationsEnabled: !settings.defaultNotificationsEnabled })}
+          disabled={saving}
+          className={`shrink-0 relative w-12 h-7 rounded-full transition-colors duration-200 disabled:opacity-40 ${
+            settings.defaultNotificationsEnabled ? "bg-emerald-500" : "bg-white/[0.12]"
+          }`}
+        >
+          <span className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform duration-200 ${
+            settings.defaultNotificationsEnabled ? "translate-x-5" : "translate-x-0"
+          }`} />
+        </button>
+      </div>
+
+      {saved && <p className="text-xs text-emerald-400 text-center">Saved.</p>}
+    </div>
+  );
+}
+
+// ── Activity Log Panel ────────────────────────────────────────────────────────
+
+const ACTION_LABELS: Record<string, string> = {
+  APPROVE_MECHANIC:        "Approved mechanic",
+  REJECT_MECHANIC:         "Rejected mechanic",
+  APPROVE_SHOP:            "Approved shop",
+  REJECT_SHOP:             "Rejected shop",
+  CHANGE_ROLE:             "Changed role",
+  BAN_USER:                "Banned user",
+  UNBAN_USER:              "Unbanned user",
+  UPDATE_SYSTEM_SETTINGS:  "Updated system settings",
+};
+
+function ActivityLogPanel() {
+  const [entries, setEntries] = useState<AdminActivityEntry[] | null>(null);
+
+  useEffect(() => {
+    getRecentAdminActivity().then(setEntries);
+  }, []);
+
+  if (!entries) return <p className="text-sm text-zinc-500 py-8 text-center">Loading…</p>;
+  if (entries.length === 0) {
+    return <p className="text-sm text-zinc-600 text-center py-12">No admin activity yet.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {entries.map((e) => (
+        <div key={e.id}
+          className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.07]
+            rounded-2xl px-4 py-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-zinc-200">
+              <span className="font-semibold text-zinc-100">{e.adminName}</span>
+              {" "}
+              {ACTION_LABELS[e.action] ?? e.action}
+              {e.targetId && <span className="text-zinc-600"> · {e.targetId.slice(0, 10)}</span>}
+            </p>
+            {e.detail && <p className="text-xs text-zinc-500 mt-0.5 truncate">{e.detail}</p>}
+          </div>
+          <p className="text-[10px] text-zinc-600 shrink-0">{e.createdAt}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
 interface AdminDashboardProps {
@@ -335,8 +624,26 @@ export default function AdminDashboardView({
   recentBookings,
   recentUsers,
 }: AdminDashboardProps) {
-  const [activeTab, setActiveTab] = useState<"queue" | "shops" | "bookings" | "users">("queue");
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<
+    "queue" | "shops" | "bookings" | "users" | "settings" | "activity"
+  >("queue");
   const firstName = adminName.split(" ")[0];
+
+  const [userSearch, setUserSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<AdminUserSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  useEffect(() => {
+    if (!userSearch.trim()) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    const t = setTimeout(() => {
+      searchUsers(userSearch.trim())
+        .then(setSearchResults)
+        .finally(() => setSearchLoading(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [userSearch]);
 
   return (
     <div className="min-h-screen w-screen bg-[#080909] relative">
@@ -358,7 +665,7 @@ export default function AdminDashboardView({
               </span>
               <span className="text-[10px] font-bold text-amber-400 bg-amber-400/10
                 border border-amber-400/20 px-2 py-0.5 rounded-md">
-                ADMIN
+                ADMINx
               </span>
             </div>
             <p className="text-sm text-zinc-500">
@@ -405,11 +712,13 @@ export default function AdminDashboardView({
 
         {/* ── Tabs ── */}
         <div className="flex bg-white/[0.04] border border-white/[0.06] rounded-2xl p-1 mb-6">
-          {([
+           {([
             { key: "queue",    label: "Verification Queue", count: stats.pendingVerifications },
             { key: "shops",    label: "Shop Verification",  count: pendingShops.length         },
             { key: "bookings", label: "Bookings",           count: stats.totalBookings        },
             { key: "users",    label: "Recent Users",       count: null                       },
+            { key: "settings", label: "Settings",           count: null                       },
+            { key: "activity", label: "Activity Log",       count: null                       },
           ] as const).map(({ key, label, count }) => (
             <button
               key={key}
@@ -516,38 +825,42 @@ export default function AdminDashboardView({
           </div>
         )}
 
-        {/* ── Users tab ── */}
+                        {/* ── Users tab ── */}
         {activeTab === "users" && (
-          <div className="space-y-2.5">
-            {recentUsers.map((u) => (
-              <div key={u.id}
-                className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.07]
-                  rounded-2xl px-4 py-3.5">
-                <div className="w-10 h-10 rounded-xl bg-white/[0.05] border border-white/[0.08]
-                  flex items-center justify-center shrink-0">
-                  <span className="text-xs font-bold text-zinc-400">
-                    {u.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-zinc-100 truncate">{u.name}</p>
-                  <p className="text-xs text-zinc-500 truncate">{u.email}</p>
-                </div>
-                <div className="text-right shrink-0 space-y-1">
-                  <span className={[
-                    "text-[10px] font-semibold px-2 py-0.5 rounded-md border",
-                    u.role === "ADMIN"    ? "bg-purple-400/10 text-purple-400 border-purple-400/20" :
-                    u.role === "MECHANIC" ? "bg-amber-400/10  text-amber-400  border-amber-400/20"  :
-                                           "bg-zinc-800       text-zinc-400   border-zinc-700",
-                  ].join(" ")}>
-                    {u.role}
-                  </span>
-                  <p className="text-[10px] text-zinc-600">{u.createdAt}</p>
-                </div>
-              </div>
-            ))}
+          <div className="space-y-3">
+            <input
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder="Search by name or email…"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08]
+                text-zinc-100 text-sm placeholder:text-zinc-600 outline-none focus:border-amber-400/40"
+            />
+
+            <div className="space-y-2.5">
+              {userSearch.trim() ? (
+                searchLoading ? (
+                  <p className="text-sm text-zinc-500 text-center py-8">Searching…</p>
+                ) : searchResults.length === 0 ? (
+                  <p className="text-sm text-zinc-600 text-center py-8">No users found.</p>
+                ) : (
+                  searchResults.map((u) => (
+                    <UserRow key={u.id} user={u} onChanged={() => router.refresh()} />
+                  ))
+                )
+              ) : (
+                recentUsers.map((u) => (
+                  <UserRow key={u.id} user={u} onChanged={() => router.refresh()} />
+                ))
+              )}
+            </div>
           </div>
         )}
+
+        {/* ── Settings tab ── */}
+        {activeTab === "settings" && <SettingsPanel />}
+
+        {/* ── Activity Log tab ── */}
+        {activeTab === "activity" && <ActivityLogPanel />}
 
       </div>
     </div>

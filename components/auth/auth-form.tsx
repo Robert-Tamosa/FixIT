@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
+import { getSystemSettings } from "@/app/dashboard/admin/admin";
 
 interface AuthFormProps {
   mode: "signin" | "signup";
@@ -18,7 +19,14 @@ export function AuthForm({ mode }: AuthFormProps) {
   const [fullName, setFullName] = useState("");
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
+  const [announcement, setAnnouncement] = useState<string | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    getSystemSettings()
+      .then((s) => setAnnouncement(s.announcementMessage))
+      .catch(() => {});
+  }, []);
 
   // ── Social auth (unchanged logic) ─────────────────────────────────────────
   const handleSocialAuth = async (provider: "google" | "facebook") => {
@@ -156,6 +164,12 @@ export function AuthForm({ mode }: AuthFormProps) {
 
             </div>
           </nav>
+
+      {announcement && (
+        <div className="relative z-20 bg-amber-400/10 border-b border-amber-400/20 px-4 py-2.5 text-center">
+          <p className="text-xs text-amber-300">{announcement}</p>
+        </div>
+      )}
 
       {/* ── Ambient background ──────────────────────────────────────────────── */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0">

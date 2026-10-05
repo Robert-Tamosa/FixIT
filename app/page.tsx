@@ -1,9 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import { useState, useEffect } from "react";
+import { getSystemSettings } from "@/app/dashboard/admin/admin";
 
 export default function LandingPage() {
+  const [announcement, setAnnouncement] = useState<string | null>(null);
+
+  useEffect(() => {
+    getSystemSettings()
+      .then((s) => setAnnouncement(s.announcementMessage))
+      .catch(() => {});
+  }, []);
+
 return ( <div className="min-h-screen bg-[#080909] text-zinc-100 overflow-hidden">
+
+  {announcement && (
+    <div className="relative z-30 bg-amber-400/10 border-b border-amber-400/20 px-4 py-2.5 text-center">
+      <p className="text-xs text-amber-300">{announcement}</p>
+    </div>
+  )}
 
   {/* Ambient Background */}
   <div className="pointer-events-none absolute inset-0">

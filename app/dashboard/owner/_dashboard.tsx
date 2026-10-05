@@ -429,45 +429,6 @@ function ActionButtonsRow({
   dispatched: DispatchedInfo | null;
   onDismissDispatched: () => void;
 }) {
-  if (dispatched) {
-    return (
-      <div
-        className="mb-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 px-5 py-4
-        flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center shrink-0">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true">
-            <path
-              d="M20 6L9 17l-5-5"
-              stroke="#34D399"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-emerald-400">
-            Help is on the way
-          </p>
-          <p className="text-xs text-zinc-500">
-            {dispatched.mechanicName} dispatched · Est. {dispatched.etaMinutes}{" "}
-            mins
-          </p>
-        </div>
-        <button
-          onClick={onDismissDispatched}
-          className="ml-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-          Dismiss
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="relative mb-5 flex gap-3">
       {/* Ping glow scoped to emergency half only */}

@@ -6,8 +6,11 @@ import {
   getShopBookings,
   acceptShopBooking,
   declineShopBooking,
+  getAssignableMechanics,
+  assignMechanicToBooking,
   type ShopOverviewStats,
   type DisplayShopBooking,
+  type DisplayAssignableMechanic,
 } from "@/app/actions/shop-dashboard";
 import { advanceBookingStatus } from "@/app/actions/booking-actions";
 import { createEstimate, editEstimate } from "@/app/actions/estimate";
@@ -71,7 +74,7 @@ export function ShopDashboardView({
       <div className="max-w-full mx-auto px-6 py-8 pb-28 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 ">
             <div className="w-11 h-11 rounded-2xl bg-amber-400/10 border border-amber-400/20
               flex items-center justify-center shrink-0">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -96,7 +99,7 @@ export function ShopDashboardView({
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-4">
           {cards.map((c) => (
             <div key={c.label} className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4
               border-l-2 border-l-amber-400/40">
@@ -278,12 +281,83 @@ function PaymentStatusStrip({ bookingId }: { bookingId: string }) {
   return null;
 }
 
+// ── Assign Mechanic control ──────────────────────────────────────────────────
+// Combined real+mock picker (see getAssignableMechanics in shop-dashboard.ts).
+// Purely cosmetic assignment — writes Booking.assignedMechanicName only, for
+// either mechanic type. mechanics is fetched once by BookingActionSections
+// and passed down, rather than re-fetched per card.
+
+function AssignMechanicControl({
+  bookingId,
+  mechanics,
+  onAssigned,
+}: {
+  bookingId: string;
+  mechanics: DisplayAssignableMechanic[];
+  onAssigned: () => void;
+}) {
+  const [selected, setSelected] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleAssign() {
+    if (!selected) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await assignMechanicToBooking(bookingId, selected);
+      setSelected("");
+      onAssigned();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not assign mechanic");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (mechanics.length === 0) {
+    return <p className="text-[11px] text-zinc-600">No mechanics in your roster yet.</p>;
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <select
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-zinc-800/60 border border-zinc-700
+            text-zinc-300 text-xs outline-none focus:border-amber-400/50"
+        >
+          <option value="">Assign mechanic…</option>
+          {mechanics.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+              {m.isMock ? " (roster)" : ""}
+              {!m.isAvailable ? " — unavailable" : ""}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={handleAssign}
+          disabled={!selected || submitting}
+          className="shrink-0 text-xs text-zinc-900 bg-amber-400 px-2.5 py-1.5 rounded-lg font-medium
+            active:scale-[0.98] transition-all disabled:opacity-40"
+        >
+          {submitting ? "…" : "Assign"}
+        </button>
+      </div>
+      {error && <p className="text-[10px] text-orange-400 mt-1">{error}</p>}
+    </div>
+  );
+}
+
 // Shared card, used by both the Pending Requests and Active Bookings groups
 // below — previously duplicated implicitly inside BookingsTab's single flat
 // list; pulled out explicitly now that there are two separate groups, so a
 // future change to the card only needs to happen once.
 function BookingActionCard({
   booking,
+  mechanics,
   estimatingId,
   setEstimatingId,
   actioningId,
@@ -292,8 +366,10 @@ function BookingActionCard({
   onDecline,
   onAdvance,
   onEstimateDone,
+  onMechanicAssigned,
 }: {
   booking: DisplayShopBooking;
+  mechanics: DisplayAssignableMechanic[];
   estimatingId: string | null;
   setEstimatingId: (id: string | null) => void;
   actioningId: string | null;
@@ -302,8 +378,13 @@ function BookingActionCard({
   onDecline: (id: string) => void;
   onAdvance: (id: string, status: string) => void;
   onEstimateDone: () => void;
+  onMechanicAssigned: () => void;
 }) {
   const b = booking;
+  // Mirrors assignMechanicToBooking's own validation in shop-dashboard.ts —
+  // PENDING needs accepting first, DONE/CANCELLED are finished states.
+  const canAssignMechanic = b.status !== "PENDING" && b.status !== "DONE" && b.status !== "CANCELLED";
+
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-2.5">
       <div className="flex items-start justify-between gap-3">
@@ -316,6 +397,11 @@ function BookingActionCard({
             )}
           </div>
           <p className="text-xs text-zinc-500 mt-0.5">{b.vehicleLabel} · {b.createdAt}</p>
+          {b.assignedMechanicName && (
+            <p className="text-[11px] text-amber-400 mt-1">
+              Handled by {b.assignedMechanicName}
+            </p>
+          )}
         </div>
         <span className={`text-[10px] px-2 py-0.5 rounded-full border shrink-0 ${STATUS_COLORS[b.status] ?? ""}`}>
           {STATUS_LABELS[b.status] ?? b.status}
@@ -323,6 +409,14 @@ function BookingActionCard({
       </div>
 
       <p className="text-xs text-zinc-400 line-clamp-2">{b.problem}</p>
+
+      {canAssignMechanic && (
+        <AssignMechanicControl
+          bookingId={b.id}
+          mechanics={mechanics}
+          onAssigned={onMechanicAssigned}
+        />
+      )}
 
       {estimatingId === b.id ? (
         <ShopEstimateForm
@@ -401,6 +495,11 @@ function BookingActionSections() {
   const [invoicingBookingId, setInvoicingBookingId] = useState<string | null>(null);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
+  const [mechanics, setMechanics] = useState<DisplayAssignableMechanic[]>([]);
+
+  useEffect(() => {
+    getAssignableMechanics().then(setMechanics).catch(() => {});
+  }, []);
 
   // Fetches everything (no status filter — full history is /jobs' job now)
   // and splits into Pending / Active client-side. Also checks payment
@@ -500,7 +599,8 @@ function BookingActionSections() {
     (b) => ACTIVE_STATUSES.has(b.status) || (b.status === "DONE" && doneUnpaidIds.has(b.id)),
   );
 
-  const cardProps = {
+    const cardProps = {
+    mechanics,
     estimatingId,
     setEstimatingId,
     actioningId,
@@ -509,6 +609,7 @@ function BookingActionSections() {
     onDecline: handleDecline,
     onAdvance: handleAdvance,
     onEstimateDone: load,
+    onMechanicAssigned: load,
   };
 
   return (
@@ -623,7 +724,7 @@ function ShopInvoiceModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4">
+    <div className="fixed inset-0 z-[200] flex items-center sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4">
       <div className="w-full sm:max-w-md bg-[#111318] border border-white/[0.08] rounded-t-3xl sm:rounded-3xl
         p-5 space-y-4 max-h-[85vh] overflow-y-auto">
         <div>

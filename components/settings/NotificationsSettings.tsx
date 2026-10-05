@@ -35,7 +35,7 @@ export function NotificationsSettings({ backHref }: { backHref: string }) {
       <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-zinc-100">Push notifications</p>
+            <p className="text-sm font-semibold text-zinc-100">Notifications</p>
             <p className="text-xs text-zinc-500 mt-0.5">
               Booking updates, messages, and status changes.
             </p>

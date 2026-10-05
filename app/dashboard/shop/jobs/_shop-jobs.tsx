@@ -4,8 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { BottomNav } from "../_shop-dashboard";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface ShopJobItem {
   id:            string;
   ownerName:     string;
@@ -97,13 +95,8 @@ function JobCard({ job }: { job: ShopJobItem }) {
     }`}>
       {/* Top row */}
       <div className="flex items-start gap-3 mb-3">
-        <div className="w-10 h-10 rounded-xl bg-zinc-800 border border-white/[0.08]
-          flex items-center justify-center shrink-0 text-xs font-bold text-zinc-300">
-          {job.ownerInitials}
-        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <p className="text-sm font-semibold text-zinc-100 truncate">{job.ownerName}</p>
             {job.isEmergency && (
               <span className="text-[9px] font-bold text-red-400
                 bg-red-400/10 border border-red-400/20 px-1.5 py-0.5 rounded-md shrink-0">
@@ -114,7 +107,6 @@ function JobCard({ job }: { job: ShopJobItem }) {
           <p className="text-xs text-zinc-500 truncate">{job.vehicleLabel}</p>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-sm font-bold text-zinc-100">{job.price}</p>
           <p className="text-[10px] text-zinc-600 mt-0.5">{job.createdAt}</p>
         </div>
       </div>

@@ -92,7 +92,7 @@ function SettingsDrawer({
       color: "text-zinc-300",
       onClick: () => {
         onClose();
-        router.push("/dashboard/owner/settings/notifications");
+        router.push("/dashboard/mechanic/profile/settings/notifications");
       },
     },
     {
@@ -101,7 +101,7 @@ function SettingsDrawer({
       color: "text-zinc-300",
       onClick: () => {
         onClose();
-        router.push("/dashboard/owner/settings/privacy");
+        router.push("/dashboard/mechanic/profile/settings/privacy");
       },
     },
     {
@@ -110,7 +110,7 @@ function SettingsDrawer({
       color: "text-zinc-300",
       onClick: () => {
         onClose();
-        router.push("/dashboard/owner/settings/help");
+        router.push("/dashboard/mechanic/profile/settings/help");
       },
     },
     {
@@ -125,7 +125,7 @@ function SettingsDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center
+      className="fixed inset-0 z-[60] flex items-center justify-center
         bg-black/70 backdrop-blur-sm px-4 pb-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();

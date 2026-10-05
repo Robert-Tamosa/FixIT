@@ -11,7 +11,7 @@
 // docs page, more reliable than the general model list for this) for the
 // current multimodal model id and swap it in below — nothing else in this
 // file needs to change.
-const GROQ_VISION_MODEL = "qwen/qwen3.6-27b";
+const GROQ_VISION_MODEL = "qwen/qwen3.8-27b";
 const GROQ_API_KEY = process.env.GROQ_API_KEY!;
 
 /**
