@@ -580,7 +580,7 @@ function ActivityLogPanel() {
 
   if (!entries) return <p className="text-sm text-zinc-500 py-8 text-center">Loading…</p>;
   if (entries.length === 0) {
-    return <p className="text-sm text-zinc-600 text-center py-12">No admin activity yet.</p>;
+    return <p className="text-sm text-zinc-600 text-center py-12">No activity yet.</p>;
   }
 
   return (
@@ -714,7 +714,7 @@ export default function AdminDashboardView({
         <div className="flex gap-1 bg-white/[0.04] border border-white/[0.06] rounded-2xl p-1 mb-6
           overflow-x-auto">
           {([
-            { key: "queue",    label: "Verification Queue", count: stats.pendingVerifications },
+            { key: "queue",    label: "Mechanic Verification", count: stats.pendingVerifications },
             { key: "shops",    label: "Shop Verification",  count: pendingShops.length         },
             { key: "bookings", label: "Bookings",           count: stats.totalBookings        },
             { key: "users",    label: "Recent Users",       count: null                       },
