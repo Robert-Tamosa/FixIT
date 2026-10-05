@@ -710,9 +710,10 @@ export default function AdminDashboardView({
           />
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="flex bg-white/[0.04] border border-white/[0.06] rounded-2xl p-1 mb-6">
-           {([
+                {/* ── Tabs ── */}
+        <div className="flex gap-1 bg-white/[0.04] border border-white/[0.06] rounded-2xl p-1 mb-6
+          overflow-x-auto">
+          {([
             { key: "queue",    label: "Verification Queue", count: stats.pendingVerifications },
             { key: "shops",    label: "Shop Verification",  count: pendingShops.length         },
             { key: "bookings", label: "Bookings",           count: stats.totalBookings        },
@@ -724,7 +725,7 @@ export default function AdminDashboardView({
               key={key}
               onClick={() => setActiveTab(key)}
               className={[
-                "flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all",
+                "shrink-0 whitespace-nowrap flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all",
                 activeTab === key
                   ? "bg-amber-400 text-[#080909]"
                   : "text-zinc-500 hover:text-zinc-300",
